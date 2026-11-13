@@ -1,4 +1,4 @@
-# fPhone (Android client)
+# fPhone - Family video calls (Android client)
 
 Family video calls. This repository currently holds the **push test app**: it shows the push
 token and logs the messages that the fPhone server sends, so that waking the phone for an
