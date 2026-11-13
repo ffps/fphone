@@ -57,6 +57,17 @@ gradle assembleDebug -PfphoneAppId=<package_name from google-services.json>
    when the app was closed. Repeat after the screen was off for some minutes to see how the
    phone treats pushes in battery saving mode (`priority=2` means the push was delayed).
 
+## If no push arrives
+
+The server answering `HTTP 200` only means that Google accepted the message. Then check:
+
+1. The log shows a line `push service started` and `new token` after install. If they are
+   missing, nothing from Google reaches the phone at all.
+2. Press **Check FCM ports**. The phone keeps one permanent connection to
+   `mtalk.google.com` (ports 5228-5230, fallback 443). If all fail on Wi-Fi, try mobile data
+   (and the other way round): a router, DNS filter or VPN may block them.
+3. Look at the battery settings of the phone (vendor battery managers can block pushes).
+
 ## Icon
 
 `art/fphone.svg` is the source. The launcher icons were rendered from it: PNG files for old

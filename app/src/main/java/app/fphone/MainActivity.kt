@@ -7,6 +7,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -69,6 +71,7 @@ class MainActivity : Activity() {
         row2.addView(button("Battery settings") {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         })
+        row2.addView(button("Check FCM ports") { checkPorts() })
         root.addView(row2)
 
         logView = TextView(this).apply {
@@ -127,9 +130,45 @@ class MainActivity : Activity() {
         val battery = if (pm.isIgnoringBatteryOptimizations(packageName)) "ignored (good)" else "active (may delay pushes)"
         val notif = if (NotificationManagerCompat.from(this).areNotificationsEnabled()) "allowed" else "BLOCKED"
         infoView.text = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}\n" +
+            "network: ${networkName()}\n" +
             "battery optimization: $battery\nnotifications: $notif"
         tokenView.text = if (token.isEmpty()) "(no token yet)" else token
         logView.text = MessageLog.text(this)
+    }
+
+    private fun networkName(): String {
+        if (Build.VERSION.SDK_INT < 23) return "n/a"
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return "none"
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
+            else -> "other"
+        }
+    }
+
+    /**
+     * Android keeps one permanent connection to Google push servers (mtalk.google.com, ports
+     * 5228-5230; 443 is the fallback). If this network blocks them, no push can arrive.
+     * This check tries to open a TCP connection to each port and writes the result to the log.
+     */
+    private fun checkPorts() {
+        MessageLog.add(this, "checking connections to Google push servers (network: ${networkName()})")
+        Thread {
+            for (port in intArrayOf(5228, 5229, 5230, 443)) {
+                val start = System.currentTimeMillis()
+                val result = try {
+                    java.net.Socket().use { s ->
+                        s.connect(java.net.InetSocketAddress("mtalk.google.com", port), 5000)
+                    }
+                    "OK"
+                } catch (e: Exception) {
+                    "FAILED (${e.javaClass.simpleName}: ${e.message})"
+                }
+                MessageLog.add(this, "mtalk.google.com:$port $result, ${System.currentTimeMillis() - start} ms")
+            }
+        }.start()
     }
 
     private fun button(label: String, onClick: () -> Unit): Button =

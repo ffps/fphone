@@ -19,6 +19,15 @@ import com.google.firebase.messaging.RemoteMessage
  */
 class FcmService : FirebaseMessagingService() {
 
+    override fun onCreate() {
+        super.onCreate()
+        MessageLog.add(this, "push service started")
+    }
+
+    override fun onDeletedMessages() {
+        MessageLog.add(this, "push messages were dropped by the server (too many or too old)")
+    }
+
     override fun onNewToken(token: String) {
         getSharedPreferences("fphone", Context.MODE_PRIVATE).edit().putString("token", token).apply()
         MessageLog.add(this, "new token (${token.length} chars)")
