@@ -13,6 +13,8 @@ import androidx.core.app.NotificationCompat
 object Notifications {
     const val CH_INCOMING = "incoming_v1"
     const val CH_ONGOING = "ongoing_v1"
+    const val CH_MISC = "misc_v1"
+    const val ID_TEST = 1003
     const val ID_INCOMING = 1001
     const val ID_ONGOING = 1002
     const val ACTION_DECLINE = "app.fphone.DECLINE"
@@ -37,6 +39,25 @@ object Notifications {
             CH_ONGOING, ctx.getString(R.string.channel_ongoing), NotificationManager.IMPORTANCE_LOW
         )
         nm.createNotificationChannel(ongoing)
+
+        val misc = NotificationChannel(
+            CH_MISC, ctx.getString(R.string.channel_misc), NotificationManager.IMPORTANCE_DEFAULT
+        )
+        nm.createNotificationChannel(misc)
+    }
+
+    /** Simple notification for the test message of "fphone push-test" on the server. */
+    fun showTest(ctx: Context, text: String) {
+        ensureChannels(ctx)
+        val open = PendingIntent.getActivity(ctx, 6, Intent(ctx, MainActivity::class.java), immutable())
+        val n = NotificationCompat.Builder(ctx, CH_MISC)
+            .setSmallIcon(R.drawable.ic_stat_call)
+            .setContentTitle(ctx.getString(R.string.notif_test_title))
+            .setContentText(text)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        ctx.getSystemService(NotificationManager::class.java).notify(ID_TEST, n)
     }
 
     private fun immutable(): Int = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
