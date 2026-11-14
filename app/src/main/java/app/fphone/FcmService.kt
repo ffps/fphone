@@ -44,6 +44,7 @@ class FcmService : FirebaseMessagingService() {
                 val id = d["call"] ?: return
                 main.post { calls.onPushCancelled(id) }
             }
+            "test" -> Notifications.showTest(this, d["text"] ?: "")
         }
     }
 
