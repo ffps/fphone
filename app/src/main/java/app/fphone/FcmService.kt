@@ -1,21 +1,14 @@
 package app.fphone
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
+import android.os.Handler
+import android.os.Looper
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
 /**
- * Receives push messages from the fPhone server. This test version only logs them and shows a
- * notification, which is enough to prove that the app is woken up when it is not running.
+ * Receives push messages from the fPhone server (data messages with high priority).
+ * An incoming call arrives as "call.incoming"; if the caller hangs up before the phone answered,
+ * "call.cancelled" follows. The messages are handed to CallManager on the main thread.
  */
 class FcmService : FirebaseMessagingService() {
 
@@ -24,68 +17,37 @@ class FcmService : FirebaseMessagingService() {
         MessageLog.add(this, "push service started")
     }
 
-    override fun onDeletedMessages() {
-        MessageLog.add(this, "push messages were dropped by the server (too many or too old)")
-    }
-
     override fun onNewToken(token: String) {
-        getSharedPreferences("fphone", Context.MODE_PRIVATE).edit().putString("token", token).apply()
-        MessageLog.add(this, "new token (${token.length} chars)")
+        MessageLog.add(this, "new push token (${token.length} chars)")
+        val calls = applicationContext.app.calls
+        Handler(Looper.getMainLooper()).post { calls.updatePushToken(token) }
     }
 
     override fun onMessageReceived(msg: RemoteMessage) {
         val d = msg.data
         // priority = what Android delivered, originalPriority = what the server asked for
-        // (1 = high, 2 = normal, 0 = unknown). If priority is 2 for a call message, the phone
-        // delayed it (battery saving).
-        MessageLog.add(this, "push: priority=${msg.priority} original=${msg.originalPriority} data=$d")
+        // (1 = high, 2 = normal). priority 2 for a call message means the phone delayed it.
+        MessageLog.add(this, "push: type=${d["type"]} priority=${msg.priority} original=${msg.originalPriority}")
 
+        val calls = applicationContext.app.calls
+        val main = Handler(Looper.getMainLooper())
         when (d["type"]) {
             "call.incoming" -> {
-                val who = d["from_name"] ?: ("user #" + d["from_id"])
-                showNotification("Incoming call", "$who (${d["media"]})")
+                val id = d["call"] ?: return
+                val fromId = d["from_id"]?.toLongOrNull() ?: 0L
+                val exp = d["exp"]?.toLongOrNull() ?: 0L
+                val name = d["from_name"] ?: ""
+                val video = d["media"] == "video"
+                main.post { calls.onPushIncoming(id, fromId, name, video, exp) }
             }
             "call.cancelled" -> {
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.cancel(NOTIFICATION_ID)
-                MessageLog.add(this, "call cancelled, notification removed")
+                val id = d["call"] ?: return
+                main.post { calls.onPushCancelled(id) }
             }
-            "test" -> showNotification("Test message", d["text"] ?: "")
-            else -> showNotification("Message", d.toString())
         }
     }
 
-    private fun showNotification(title: String, text: String) {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            MessageLog.add(this, "notification not shown: permission is not granted")
-            return
-        }
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Calls", NotificationManager.IMPORTANCE_HIGH)
-            )
-        }
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val n = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_call)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setAutoCancel(true)
-            .setContentIntent(open)
-            .build()
-        nm.notify(NOTIFICATION_ID, n)
-    }
-
-    companion object {
-        private const val CHANNEL = "calls"
-        private const val NOTIFICATION_ID = 1001
+    override fun onDeletedMessages() {
+        MessageLog.add(this, "push messages were dropped by the server (too many or too old)")
     }
 }

@@ -1,8 +1,24 @@
-# fPhone - Family video calls (Android client)
+# fPhone (Android client)
 
-Family video calls. This repository currently holds the **push test app**: it shows the push
-token and logs the messages that the fPhone server sends, so that waking the phone for an
-incoming call can be verified before the real client is written.
+Family video calls over your own server (see the fPhone server). Native WebRTC, all call media
+goes through the TURN relay of the server, so it works between phones behind mobile NAT.
+
+* Android 8.0 (API 26) or newer.
+* Login with the user name and password that the administrator created on the server.
+* Incoming calls wake the phone through a push message (Firebase Cloud Messaging), also when
+  the app is closed; the call screen is shown over the lock screen.
+* The server can use its own certificate. In that case enter the certificate fingerprint
+  (`sha256/...`, printed by `fphone fingerprint` on the server) in the login form: the app then
+  trusts exactly that server key and nothing else.
+
+## First start
+
+1. Open the app, enter the server address (for example `https://domain.com`), optionally the
+   certificate fingerprint, the login and the password.
+2. Allow the microphone, the camera and notifications.
+3. On Android 14 and newer allow "full screen notifications" when the app asks (otherwise an
+   incoming call is not shown on the lock screen), and switch off the battery restriction for
+   the app (otherwise the phone may delay pushes).
 
 ## Build and release (GitHub Actions)
 
@@ -10,7 +26,7 @@ A release is made by either:
 
 - pushing a tag `vX.Y.Z`, or
 - pushing a commit to `main` whose message contains `[release vX.Y.Z]`, for example
-  `Add push test [release v0.1.0]`.
+  `Native WebRTC client [release v0.2.0]`.
 
 The workflow builds a signed APK named `fPhone-X.Y.Z.apk` and attaches it to a GitHub release
 `vX.Y.Z`. Other pushes to `main` only check that the app builds and keep a debug APK as a
@@ -39,6 +55,12 @@ How to make the base64 text on Windows (PowerShell):
 
 On Linux: `base64 -w0 google-services.json`.
 
+### WebRTC library version
+
+`app/build.gradle.kts` asks for `io.github.webrtc-sdk:android:125.+` (the newest build of the 125
+series). After the first successful build, copy the exact version from the Gradle log into
+that line, so that builds are reproducible.
+
 ## Local build
 
 Install JDK 17, the Android SDK and Gradle 8.7, put your `google-services.json` into `app/`
@@ -48,25 +70,17 @@ and run:
 gradle assembleDebug -PfphoneAppId=<package_name from google-services.json>
 ```
 
-## Testing the push with the server
+## How it works
 
-1. Install the APK, open the app, allow notifications. The screen shows the push token.
-2. Press **Copy token** and send it to yourself, or type it on the server machine.
-3. On the server machine run `fphone -c fphone.yaml push-test TOKEN`.
-4. The phone should show a notification and a line `push: priority=1 ...` in the log, also
-   when the app was closed. Repeat after the screen was off for some minutes to see how the
-   phone treats pushes in battery saving mode (`priority=2` means the push was delayed).
-
-## If no push arrives
-
-The server answering `HTTP 200` only means that Google accepted the message. Then check:
-
-1. The log shows a line `push service started` and `new token` after install. If they are
-   missing, nothing from Google reaches the phone at all.
-2. Press **Check FCM ports**. The phone keeps one permanent connection to
-   `mtalk.google.com` (ports 5228-5230, fallback 443). If all fail on Wi-Fi, try mobile data
-   (and the other way round): a router, DNS filter or VPN may block them.
-3. Look at the battery settings of the phone (vendor battery managers can block pushes).
+* `CallManager` is the brain: it keeps the WebSocket connection to the server only while the app
+  is visible or a call is going on, and drives the call state (outgoing, incoming, connecting,
+  active). Screens only show its state.
+* `RtcEngine` wraps one WebRTC peer connection (microphone, optional camera, TURN relay,
+  ICE restart after a lost connection).
+* `FcmService` receives the push message for an incoming call; `Notifications` shows the ringing
+  notification with a full screen intent; `CallService` keeps the call alive in the background.
+* The "Log" button on the main screen shows the diagnostic log and the push token (also useful
+  for `fphone push-test TOKEN` on the server).
 
 ## Icon
 

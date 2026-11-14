@@ -18,10 +18,15 @@ android {
 
     defaultConfig {
         applicationId = appIdProp
-        minSdk = 21
+        minSdk = 26
         targetSdk = 34
         versionCode = versionCodeProp
         versionName = versionNameProp
+
+        // Keep the APK small: the WebRTC library ships native code for every CPU type.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     // The release key comes from environment variables set by the workflow.
@@ -62,4 +67,10 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
     implementation("com.google.firebase:firebase-messaging")
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Native WebRTC (libwebrtc build, classes in org.webrtc). The "125.+" range takes the newest
+    // build of the 125 series. After the first successful build, put the exact version that
+    // Gradle resolved here, so that builds are reproducible.
+    implementation("io.github.webrtc-sdk:android:125.+")
 }
