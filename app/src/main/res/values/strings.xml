@@ -73,4 +73,6 @@
     <string name="channel_ongoing">Идущий звонок</string>
     <string name="notif_ongoing_title">Идёт звонок</string>
     <string name="notif_ongoing_text">Разговор: %1$s</string>
+    <string name="channel_misc">Служебные уведомления</string>
+    <string name="notif_test_title">Проверка push</string>
 </resources>
