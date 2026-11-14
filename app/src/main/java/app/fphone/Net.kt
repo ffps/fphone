@@ -22,7 +22,7 @@ import javax.net.ssl.X509TrustManager
 /** Error from the server (code from the JSON error body) or a local network problem. */
 class ApiException(val code: String, val status: Int = 0) : Exception(code)
 
-data class Contact(val id: Long, val name: String, val online: Boolean)
+data class Contact(val id: Long, val name: String, val online: Boolean, val reachable: Boolean)
 
 /** Runs blocking work on a background thread and delivers the result on the main thread. */
 object Bg {
@@ -143,7 +143,7 @@ class Net(private val prefs: Prefs) {
         val out = ArrayList<Contact>()
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
-            out.add(Contact(o.getLong("id"), o.optString("name"), o.optBoolean("online")))
+            out.add(Contact(o.getLong("id"), o.optString("name"), o.optBoolean("online"), o.optBoolean("reachable", o.optBoolean("online"))))
         }
         return out
     }

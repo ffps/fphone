@@ -128,7 +128,7 @@ class MainActivity : Activity(), CallManager.Listener {
             "login"
         } else {
             "main|${calls.connected}|${calls.state}|" +
-                calls.contacts.joinToString(",") { "${it.id}:${it.name}:${it.id in calls.online}" } +
+                calls.contacts.joinToString(",") { "${it.id}:${it.name}:${it.id in calls.online}:${it.reachable}" } +
                 "|${prefs.userName}|${bannersKey()}"
         }
         if (!force && key == renderedKey) return
@@ -217,17 +217,19 @@ class MainActivity : Activity(), CallManager.Listener {
         }
         for (c in calls.contacts) {
             val on = c.id in calls.online
+            // A user whose app is closed can still be called: the server wakes the phone with a push.
+            val canCall = (on || c.reachable) && calls.state == CallManager.State.IDLE
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 setPadding(0, dp(6), 0, dp(6))
             }
             row.addView(TextView(this).apply {
-                text = (if (on) "\u25CF " else "\u25CB ") + c.name
+                text = (if (on) "\u25CF " else if (c.reachable) "\u25D0 " else "\u25CB ") + c.name
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            row.addView(smallButton(R.string.btn_audio, on && calls.state == CallManager.State.IDLE) { callClicked(c, false) })
-            row.addView(smallButton(R.string.btn_video, on && calls.state == CallManager.State.IDLE) { callClicked(c, true) })
+            row.addView(smallButton(R.string.btn_audio, canCall) { callClicked(c, false) })
+            row.addView(smallButton(R.string.btn_video, canCall) { callClicked(c, true) })
             content.addView(row)
         }
 
