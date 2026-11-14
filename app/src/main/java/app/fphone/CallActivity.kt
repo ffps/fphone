@@ -179,6 +179,11 @@ class CallActivity : Activity(), CallManager.Listener {
         controlsRow.addView(speakerButton)
 
         hangupButton = button(R.string.btn_hangup, "#c62828") { app.calls.hangup() }
+        // This button sits directly in a vertical layout: it needs the full width (the helper makes
+        // buttons for horizontal rows, with zero width and a weight).
+        hangupButton.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply {
+            setMargins(dp(4), dp(8), dp(4), dp(4))
+        }
 
         bottom.addView(incomingRow)
         bottom.addView(controlsRow)

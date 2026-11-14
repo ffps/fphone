@@ -11,6 +11,8 @@ plugins {
 val appIdProp = (findProperty("fphoneAppId") as String?) ?: "app.fphone"
 val versionNameProp = (findProperty("fphoneVersionName") as String?) ?: "0.0.0-dev"
 val versionCodeProp = (findProperty("fphoneVersionCode") as String?)?.toInt() ?: 1
+// GitHub repository (owner/name) that the app checks for updates; set by the workflow.
+val updateRepoProp = (findProperty("fphoneUpdateRepo") as String?) ?: ""
 
 android {
     namespace = "app.fphone"
@@ -22,6 +24,7 @@ android {
         targetSdk = 34
         versionCode = versionCodeProp
         versionName = versionNameProp
+        buildConfigField("String", "UPDATE_REPO", "\"$updateRepoProp\"")
 
         // Keep the APK small: the WebRTC library ships native code for every CPU type.
         ndk {
@@ -52,6 +55,10 @@ android {
                 signingConfigs.getByName("debug")
             }
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

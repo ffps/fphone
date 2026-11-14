@@ -73,6 +73,25 @@
     <string name="channel_ongoing">Идущий звонок</string>
     <string name="notif_ongoing_title">Идёт звонок</string>
     <string name="notif_ongoing_text">Разговор: %1$s</string>
+    <!-- Update -->
+    <string name="update_version">Версия %1$s</string>
+    <string name="btn_check_update">Проверить обновление</string>
+    <string name="update_checking">Проверяем…</string>
+    <string name="update_latest">Установлена последняя версия</string>
+    <string name="update_available">Доступна версия %1$s</string>
+    <string name="btn_update">Обновить</string>
+    <string name="update_downloading">Скачивание… %1$d%%</string>
+    <string name="update_ready">Версия %1$s скачана</string>
+    <string name="btn_install">Установить</string>
+    <string name="update_error_check">Не удалось проверить обновление</string>
+    <string name="update_error_download">Не удалось скачать обновление</string>
+    <string name="update_no_release">Обновлений пока нет</string>
+    <string name="update_not_configured">Обновление в этой сборке не настроено</string>
+    <string name="update_allow_install">Разрешите установку приложений для fPhone и нажмите «Обновить» ещё раз</string>
+    <string name="update_busy_call">Нельзя обновлять во время звонка</string>
+    <string name="main_call_active">Идёт звонок: %1$s</string>
+    <string name="btn_return">Вернуться</string>
+
     <string name="channel_misc">Служебные уведомления</string>
     <string name="notif_test_title">Проверка push</string>
 </resources>

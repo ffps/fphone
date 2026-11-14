@@ -29,15 +29,18 @@ import com.google.firebase.messaging.FirebaseMessaging
 
 /**
  * Login form (until the user is logged in) and the list of contacts with Audio / Video buttons.
- * The whole content is rebuilt when something that is shown changes.
+ * The screen has two parts that are rebuilt separately: the main content, and the update box at
+ * the bottom (so that update progress does not wipe what the user types into the login form).
  */
-class MainActivity : Activity(), CallManager.Listener {
+class MainActivity : Activity(), CallManager.Listener, Updater.Listener {
 
     private lateinit var content: LinearLayout
+    private lateinit var updateBox: LinearLayout
     private var renderedKey = ""
     private var errorView: TextView? = null
     private var loginButton: Button? = null
     private var pendingCall: Pair<Contact, Boolean>? = null
+    private var installRequested = false
 
     private val prefs: Prefs
         get() = app.prefs
@@ -45,11 +48,15 @@ class MainActivity : Activity(), CallManager.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val scroll = ScrollView(this)
-        content = LinearLayout(this).apply {
+        val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        scroll.addView(content)
+        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        updateBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(content)
+        column.addView(updateBox)
+        scroll.addView(column)
         setContentView(scroll)
     }
 
@@ -57,7 +64,10 @@ class MainActivity : Activity(), CallManager.Listener {
         super.onStart()
         app.calls.addListener(this)
         app.calls.onActivityStarted()
+        app.updater.addListener(this)
         render(true)
+        renderUpdate()
+        app.updater.autoCheck()
         if (prefs.loggedIn) {
             requestMissingPermissions()
             app.calls.loadContacts()
@@ -66,12 +76,22 @@ class MainActivity : Activity(), CallManager.Listener {
 
     override fun onStop() {
         app.calls.removeListener(this)
+        app.updater.removeListener(this)
         app.calls.onActivityStopped()
         super.onStop()
     }
 
     override fun onChanged() {
         render(false)
+    }
+
+    override fun onUpdateChanged() {
+        renderUpdate()
+        val u = app.updater
+        if (u.kind == Updater.Kind.READY && installRequested) {
+            installRequested = false
+            u.install(this)
+        }
     }
 
     // ---------- permissions ----------
@@ -120,14 +140,14 @@ class MainActivity : Activity(), CallManager.Listener {
         startActivity(CallActivity.intent(this))
     }
 
-    // ---------- screens ----------
+    // ---------- main content ----------
 
     private fun render(force: Boolean) {
         val calls = app.calls
         val key = if (!prefs.loggedIn) {
             "login"
         } else {
-            "main|${calls.connected}|${calls.state}|" +
+            "main|${calls.connected}|${calls.state}|${calls.call?.peerName}|" +
                 calls.contacts.joinToString(",") { "${it.id}:${it.name}:${it.id in calls.online}:${it.reachable}" } +
                 "|${prefs.userName}|${bannersKey()}"
         }
@@ -210,6 +230,20 @@ class MainActivity : Activity(), CallManager.Listener {
             setPadding(0, 0, 0, dp(8))
         })
 
+        // A call that is going on: the user can return to it or end it from here.
+        val active = calls.call
+        if (active != null && calls.state != CallManager.State.IDLE) {
+            content.addView(TextView(this).apply {
+                text = getString(R.string.main_call_active, active.peerName)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setPadding(0, dp(8), 0, dp(4))
+            })
+            val callRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            callRow.addView(smallButton(R.string.btn_return, true) { startActivity(CallActivity.intent(this)) })
+            callRow.addView(smallButton(R.string.btn_hangup, true) { calls.hangup() })
+            content.addView(callRow)
+        }
+
         addBanners()
 
         if (calls.contacts.isEmpty()) {
@@ -242,7 +276,61 @@ class MainActivity : Activity(), CallManager.Listener {
         content.addView(bottom)
     }
 
-    // Hints that help calls to arrive reliably.
+    // ---------- update box ----------
+
+    private fun renderUpdate() {
+        val u = app.updater
+        updateBox.removeAllViews()
+        updateBox.addView(TextView(this).apply {
+            text = getString(R.string.update_version, u.installedVersion)
+            setPadding(0, dp(24), 0, dp(4))
+        })
+        val status = when (u.kind) {
+            Updater.Kind.IDLE -> ""
+            Updater.Kind.CHECKING -> getString(R.string.update_checking)
+            Updater.Kind.UP_TO_DATE -> getString(R.string.update_latest)
+            Updater.Kind.AVAILABLE -> getString(R.string.update_available, u.latestVersion)
+            Updater.Kind.DOWNLOADING -> getString(R.string.update_downloading, u.progress)
+            Updater.Kind.READY -> getString(R.string.update_ready, u.latestVersion)
+            Updater.Kind.ERROR -> getString(
+                when (u.errorCode) {
+                    "no_repo" -> R.string.update_not_configured
+                    "no_release" -> R.string.update_no_release
+                    "download" -> R.string.update_error_download
+                    else -> R.string.update_error_check
+                }
+            )
+        }
+        if (status.isNotEmpty()) updateBox.addView(TextView(this).apply { text = status })
+
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val busy = u.kind == Updater.Kind.CHECKING || u.kind == Updater.Kind.DOWNLOADING
+        row.addView(smallButton(R.string.btn_check_update, !busy) { u.check() })
+        when (u.kind) {
+            Updater.Kind.AVAILABLE -> row.addView(smallButton(R.string.btn_update, true) { updateClicked() })
+            Updater.Kind.READY -> row.addView(smallButton(R.string.btn_install, true) { u.install(this) })
+            else -> {}
+        }
+        updateBox.addView(row)
+    }
+
+    private fun updateClicked() {
+        if (app.calls.state != CallManager.State.IDLE) {
+            Toast.makeText(this, R.string.update_busy_call, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            // The user has to allow installing from this app once; then press "Update" again.
+            Toast.makeText(this, R.string.update_allow_install, Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            return
+        }
+        installRequested = true
+        app.updater.download()
+    }
+
+    // ---------- hints that help calls to arrive reliably ----------
+
     private fun bannersKey(): String = "${needFullScreenSetting()}|${!ignoringBattery()}"
 
     private fun needFullScreenSetting(): Boolean {

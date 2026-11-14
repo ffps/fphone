@@ -86,3 +86,16 @@ gradle assembleDebug -PfphoneAppId=<package_name from google-services.json>
 
 `art/fphone.svg` is the source. The launcher icons were rendered from it: PNG files for old
 Android versions and a vector adaptive icon for Android 8 and newer.
+
+## Updates
+
+The main screen shows the installed version and the button **Check for updates** (it also
+checks once when the app starts). When a newer release exists, the button **Update** appears: it
+downloads `fPhone-X.Y.Z.apk` from the GitHub release and starts the system installer.
+
+* The repository is taken from the build (`github.repository` of the workflow), nothing is
+  stored in the source. The repository must be public.
+* The first time, Android asks to allow installing apps from fPhone (a settings screen opens).
+* An update is installed only if it is signed with the same key as the installed app, so keep
+  using the same keystore for all releases.
+* Updates are blocked while a call is going on.
