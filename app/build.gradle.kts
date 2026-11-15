@@ -94,5 +94,6 @@ dependencies {
     // build of the 125 series. After the first successful build, put the exact version that
     // Gradle resolved here, so that builds are reproducible.
     implementation("io.github.webrtc-sdk:android:125.+")
-    implementation("androidx.compose.material:material-icons-extended:1.7.8")
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
+    implementation("androidx.fragment:fragment:1.8.9")
 }
