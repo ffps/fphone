@@ -11,6 +11,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import app.fphone.ui.FPhoneTheme
@@ -36,6 +37,30 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     private val startTab = mutableIntStateOf(0)
     private var installRequested = false
     private var pendingCall: Triple<Long, String, Boolean>? = null
+
+    /** Background permission request (audio, camera, notifications) — no follow-up action. */
+    private val permissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        // Permission states may have changed; redraw the screens.
+        app.uiTick.intValue++
+    }
+
+    /** Permission request triggered right before a call; resumes [pendingCall] afterwards. */
+    private val callPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        app.uiTick.intValue++
+        val p = pendingCall
+        pendingCall = null
+        if (p == null) return@registerForActivityResult
+        if (!granted(Manifest.permission.RECORD_AUDIO)) {
+            Toast.makeText(this, R.string.perm_audio_needed, Toast.LENGTH_LONG).show()
+            return@registerForActivityResult
+        }
+        // Without the camera permission a video call becomes an audio call.
+        startCall(p.first, p.second, p.third && granted(Manifest.permission.CAMERA))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,7 +144,8 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
 
     // ---------- permissions and calls ----------
 
-    private fun granted(p: String): Boolean = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+    private fun granted(p: String): Boolean =
+        checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
     private fun requestMissingPermissions() {
         val need = ArrayList<String>()
@@ -128,23 +154,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
             need.add(Manifest.permission.POST_NOTIFICATIONS)
         }
-        if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        app.uiTick.intValue++
-        if (requestCode == 10) {
-            val p = pendingCall
-            pendingCall = null
-            if (p == null) return
-            if (!granted(Manifest.permission.RECORD_AUDIO)) {
-                Toast.makeText(this, R.string.perm_audio_needed, Toast.LENGTH_LONG).show()
-                return
-            }
-            // Without the camera permission a video call becomes an audio call.
-            startCall(p.first, p.second, p.third && granted(Manifest.permission.CAMERA))
-        }
+        if (need.isNotEmpty()) permissionsLauncher.launch(need.toTypedArray())
     }
 
     private fun callClicked(peerId: Long, name: String, video: Boolean) {
@@ -153,7 +163,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         if (video && !granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA)
         if (need.isNotEmpty()) {
             pendingCall = Triple(peerId, name, video)
-            requestPermissions(need.toTypedArray(), 10)
+            callPermissionLauncher.launch(need.toTypedArray())
             return
         }
         startCall(peerId, name, video)

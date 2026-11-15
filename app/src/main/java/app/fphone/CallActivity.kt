@@ -10,6 +10,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import app.fphone.ui.CallScreen
 import app.fphone.ui.FPhoneTheme
 
@@ -25,6 +26,23 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
         fun intent(ctx: Context): Intent =
             Intent(ctx, CallActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+
+    // Registered before onCreate; must not be called after STARTED.
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
+        val cameraGranted = permissions[Manifest.permission.CAMERA] == true
+
+        val c = app.calls.call ?: return@registerForActivityResult
+        if (!audioGranted) {
+            // A call is not possible without the microphone.
+            app.calls.reject()
+        } else {
+            // Without the camera permission the video call is answered with sound only.
+            app.calls.accept(c.video && cameraGranted)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,7 +101,8 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
 
     // ---------- answering ----------
 
-    private fun granted(p: String): Boolean = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+    private fun granted(p: String): Boolean =
+        checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
     private fun acceptClicked() {
         val c = app.calls.call ?: return
@@ -93,19 +112,7 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
         if (need.isEmpty()) {
             app.calls.accept(c.video)
         } else {
-            requestPermissions(need.toTypedArray(), 2)
+            permissionLauncher.launch(need.toTypedArray())
         }
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != 2) return
-        val c = app.calls.call ?: return
-        if (!granted(Manifest.permission.RECORD_AUDIO)) {
-            app.calls.reject() // a call is not possible without the microphone
-            return
-        }
-        // Without the camera permission the video call is answered with sound only.
-        app.calls.accept(c.video && granted(Manifest.permission.CAMERA))
     }
 }
