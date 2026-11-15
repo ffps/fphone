@@ -41,6 +41,16 @@ class Prefs(ctx: Context) {
         get() = str("fcm_token")
         set(v) = put("fcm_token", v)
 
+    /** The order of the contact list that the user made by dragging (user IDs). */
+    var contactOrder: List<Long>
+        get() = str("contact_order").split(',').mapNotNull { it.toLongOrNull() }
+        set(v) = put("contact_order", v.joinToString(","))
+
+    /** Use the colors of the wallpaper (Material You) instead of the fPhone colors. */
+    var dynamicColor: Boolean
+        get() = sp.getBoolean("dynamic_color", false)
+        set(v) = sp.edit().putBoolean("dynamic_color", v).apply()
+
     val loggedIn: Boolean
         get() = sessionToken.isNotEmpty() && server.isNotEmpty()
 

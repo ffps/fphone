@@ -92,6 +92,75 @@
     <string name="main_call_active">Идёт звонок: %1$s</string>
     <string name="btn_return">Вернуться</string>
 
+    <!-- Main screens -->
+    <string name="tab_contacts">Контакты</string>
+    <string name="tab_recents">Последние</string>
+    <string name="menu_settings">Настройки</string>
+    <string name="menu_clear_recents">Очистить последние</string>
+    <string name="recents_empty">Звонков пока не было</string>
+    <string name="contacts_empty">Других пользователей пока нет</string>
+    <string name="contacts_hint">Чтобы изменить порядок, нажмите на контакт и удерживайте</string>
+    <string name="status_online">в сети</string>
+    <string name="status_offline">не в сети</string>
+    <string name="status_unavailable">недоступен</string>
+    <string name="banner_offline">Нет связи с сервером</string>
+    <string name="cd_call">Позвонить</string>
+    <string name="cd_video">Видеозвонок</string>
+    <string name="cd_menu">Меню</string>
+    <string name="cd_back">Назад</string>
+    <string name="login_advanced">Дополнительно</string>
+    <string name="show_password">Показать</string>
+    <string name="hide_password">Скрыть</string>
+
+    <!-- History -->
+    <string name="h_outgoing">Исходящий</string>
+    <string name="h_incoming">Входящий</string>
+    <string name="h_missed">Пропущенный</string>
+    <string name="h_declined">Отклонённый</string>
+    <string name="h_rejected">Абонент отклонил</string>
+    <string name="h_no_answer">Нет ответа</string>
+    <string name="h_busy">Занято</string>
+    <string name="h_offline">Недоступен</string>
+    <string name="h_cancelled">Отменён</string>
+    <string name="h_failed">Не удалось</string>
+    <string name="h_elsewhere">Принят на другом устройстве</string>
+    <string name="yesterday">Вчера</string>
+    <string name="notif_missed_title">Пропущенный звонок</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Настройки</string>
+    <string name="section_account">Учётная запись</string>
+    <string name="logout_confirm">Выйти из учётной записи?</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="section_server">Сервер</string>
+    <string name="label_server">Адрес сервера</string>
+    <string name="label_pin">Отпечаток сертификата</string>
+    <string name="section_look">Оформление</string>
+    <string name="dynamic_color">Цвета из обоев</string>
+    <string name="dynamic_color_hint">Работает на Android 12 и новее</string>
+    <string name="section_reliability">Надёжность звонков</string>
+    <string name="perm_ok">Разрешено</string>
+    <string name="perm_no">Не разрешено</string>
+    <string name="setting_notifications">Уведомления</string>
+    <string name="setting_fullscreen">Полноэкранные уведомления</string>
+    <string name="fullscreen_no">Не разрешено: входящий звонок не появится на заблокированном экране</string>
+    <string name="setting_battery">Экономия батареи</string>
+    <string name="battery_free">Ограничений нет</string>
+    <string name="battery_limited">Включена: звонки могут приходить с задержкой</string>
+    <string name="setting_mic">Микрофон</string>
+    <string name="setting_camera">Камера</string>
+    <string name="btn_allow">Разрешить</string>
+    <string name="section_updates">Обновления</string>
+    <string name="section_diag">Диагностика</string>
+    <string name="diag_hint">Журнал событий и токен для проверки push</string>
+    <string name="section_about">О приложении</string>
+
+    <!-- Call screen -->
+    <string name="call_mic">Микрофон</string>
+    <string name="call_speaker">Динамик</string>
+    <string name="call_camera">Камера</string>
+    <string name="call_flip">Перевернуть</string>
+
     <string name="channel_misc">Служебные уведомления</string>
     <string name="notif_test_title">Проверка push</string>
 </resources>

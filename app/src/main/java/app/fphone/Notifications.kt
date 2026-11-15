@@ -46,6 +46,23 @@ object Notifications {
         nm.createNotificationChannel(misc)
     }
 
+    /** Notification about a missed incoming call; it opens the "Recents" tab. */
+    fun showMissed(ctx: Context, name: String) {
+        ensureChannels(ctx)
+        val open = PendingIntent.getActivity(
+            ctx, 7, Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, 1), immutable()
+        )
+        val n = NotificationCompat.Builder(ctx, CH_MISC)
+            .setSmallIcon(R.drawable.ic_stat_call)
+            .setContentTitle(ctx.getString(R.string.notif_missed_title))
+            .setContentText(name)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        ctx.getSystemService(NotificationManager::class.java).notify(2000 + (name.hashCode() and 0xff), n)
+    }
+
     /** Simple notification for the test message of "fphone push-test" on the server. */
     fun showTest(ctx: Context, text: String) {
         ensureChannels(ctx)

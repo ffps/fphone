@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the window itself; all screens are drawn with Compose Material 3 -->
+    <style name="Theme.FPhone" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFFCFDF6</item>
+    </style>
+</resources>

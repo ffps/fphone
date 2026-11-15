@@ -59,6 +59,11 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
+    }
+    composeOptions {
+        // The Compose compiler version that belongs to Kotlin 1.9.24.
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     compileOptions {
@@ -75,6 +80,15 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Jetpack Compose with Material 3 (versions come from the BOM).
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // Native WebRTC (libwebrtc build, classes in org.webrtc). The "125.+" range takes the newest
     // build of the 125 series. After the first successful build, put the exact version that

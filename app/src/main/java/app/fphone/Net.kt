@@ -22,7 +22,7 @@ import javax.net.ssl.X509TrustManager
 /** Error from the server (code from the JSON error body) or a local network problem. */
 class ApiException(val code: String, val status: Int = 0) : Exception(code)
 
-data class Contact(val id: Long, val name: String, val online: Boolean, val reachable: Boolean)
+data class Contact(val id: Long, val name: String, val online: Boolean, val reachable: Boolean, val avatar: Long)
 
 /** Runs blocking work on a background thread and delivers the result on the main thread. */
 object Bg {
@@ -138,12 +138,41 @@ class Net(private val prefs: Prefs) {
         request("PUT", "/device", JSONObject().put("fcm_token", fcmToken), true)
     }
 
+    /** The photo of a user as JPEG bytes, or null if there is none. */
+    fun avatar(userId: Long): ByteArray? {
+        val req = Request.Builder()
+            .url(prefs.server + "/api/v1/users/" + userId + "/avatar")
+            .header("Authorization", "Bearer " + prefs.sessionToken)
+            .build()
+        val result: ByteArray? = try {
+            client().newCall(req).execute().use { resp ->
+                if (resp.code == 404) {
+                    null
+                } else {
+                    if (!resp.isSuccessful) throw ApiException("http_${resp.code}", resp.code)
+                    val bytes = resp.body?.bytes()
+                    if (bytes != null && bytes.size > 2 * 1024 * 1024) null else bytes
+                }
+            }
+        } catch (e: SSLException) {
+            throw ApiException("cert")
+        } catch (e: IOException) {
+            throw ApiException("network")
+        }
+        return result
+    }
+
     fun contacts(): List<Contact> {
         val arr = request("GET", "/contacts", null, true).optJSONArray("contacts") ?: return emptyList()
         val out = ArrayList<Contact>()
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
-            out.add(Contact(o.getLong("id"), o.optString("name"), o.optBoolean("online"), o.optBoolean("reachable", o.optBoolean("online"))))
+            out.add(
+                Contact(
+                    o.getLong("id"), o.optString("name"), o.optBoolean("online"),
+                    o.optBoolean("reachable", o.optBoolean("online")), o.optLong("avatar", 0L)
+                )
+            )
         }
         return out
     }

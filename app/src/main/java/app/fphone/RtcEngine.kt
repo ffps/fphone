@@ -322,6 +322,18 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
         if (remote != null) remoteVideo?.addSink(remote)
     }
 
+    fun setLocalSink(sink: VideoSink?) {
+        localSink?.let { videoTrack?.removeSink(it) }
+        localSink = sink
+        if (sink != null) videoTrack?.addSink(sink)
+    }
+
+    fun setRemoteSink(sink: VideoSink?) {
+        remoteSink?.let { remoteVideo?.removeSink(it) }
+        remoteSink = sink
+        if (sink != null) remoteVideo?.addSink(sink)
+    }
+
     fun detachRenderers() {
         localSink?.let { videoTrack?.removeSink(it) }
         remoteSink?.let { remoteVideo?.removeSink(it) }
@@ -388,6 +400,10 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
         val f = factory
         val m = adm
         pc = null
+        // The tracks are owned by the peer connection and become invalid with it.
+        videoTrack = null
+        remoteVideo = null
+        audioTrack = null
         // Releasing native objects can take a moment: do it off the main thread.
         Thread {
             try {

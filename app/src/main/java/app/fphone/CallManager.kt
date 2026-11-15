@@ -637,8 +637,33 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     // ---------- end of a call ----------
 
+    /** Writes the call into the history ("Recents") and notifies about a missed call. */
+    private fun recordHistory(c: CallInfo, reason: String) {
+        val talk = if (connectedSince > 0L) ((SystemClock.elapsedRealtime() - connectedSince) / 1000L).toInt() else 0
+        val result = when {
+            connectedSince > 0L -> "answered"
+            c.outgoing -> when (reason) {
+                "no_answer", "busy", "offline" -> reason
+                "rejected" -> "rejected"
+                "hangup", "cancelled" -> "cancelled"
+                else -> "failed"
+            }
+            else -> when (reason) {
+                "cancelled", "no_answer", "gone" -> "missed"
+                "declined", "hangup" -> "declined"
+                "answered_elsewhere" -> "elsewhere"
+                else -> "failed"
+            }
+        }
+        app.history.add(
+            HistoryEntry(System.currentTimeMillis(), c.peerId, c.peerName, c.outgoing, c.video, result, talk)
+        )
+        if (result == "missed") Notifications.showMissed(app, c.peerName)
+    }
+
     private fun endLocal(reason: String) {
         val c = call
+        if (c != null) recordHistory(c, reason)
         MessageLog.add(app, "call ended: $reason")
         lastEndReason = reason
         lastPeerName = c?.peerName ?: ""

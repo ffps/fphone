@@ -11,6 +11,29 @@ goes through the TURN relay of the server, so it works between phones behind mob
   (`sha256/...`, printed by `fphone fingerprint` on the server) in the login form: the app then
   trusts exactly that server key and nothing else.
 
+## Screens
+
+Material 3 (Jetpack Compose); light or dark theme and text size follow the system settings.
+The colors are green like the app icon; "Colors from the wallpaper" in the settings switches to
+Material You colors on Android 12 and newer.
+
+* **Contacts**: people with their photo and an "online" dot, buttons for an audio or a video call.
+  Press and hold a contact and drag it to change the order (the order is kept on the phone). A
+  contact whose app is closed can still be called: the phone is woken up by a push message.
+* **Recents**: the call history of this phone (missed calls in red, a badge on the tab and a
+  notification for a missed call). The button on the right calls back.
+* **Settings** (menu with three dots, top right): account, server, colors, the state of the
+  permissions that calls need (notifications, full screen notifications, battery, microphone,
+  camera), updates and the diagnostic log.
+* **Call screen**: incoming call (Decline / Answer), calling, and the running call with buttons for
+  the microphone, the loudspeaker, the camera and its switching, and the red hang-up button.
+
+### Photos of users
+
+The server gives a photo to every user that has a JPEG file `avatars/<user id>.jpg` in its data
+folder (see the server config). The app downloads a photo once and keeps it; a changed file is
+picked up automatically. Users without a photo get a colored circle with the first letter.
+
 ## First start
 
 1. Open the app, enter the server address (for example `https://domain.com`), optionally the
