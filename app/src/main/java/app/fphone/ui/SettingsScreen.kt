@@ -3,9 +3,16 @@
 package app.fphone.ui
 
 import android.Manifest
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.ByteArrayOutputStream
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
 import android.app.NotificationManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,8 +21,9 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -35,31 +43,85 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import app.fphone.MessageLog
+import app.fphone.Bg
+import app.fphone.app
 import app.fphone.R
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 
 @Composable
 fun SettingsScreen(
     dynamicColor: Boolean,
     onDynamicColor: (Boolean) -> Unit,
-    onUpdate: () -> Unit,
     onLogout: () -> Unit,
     onBack: () -> Unit
 ) {
     val ctx = LocalContext.current
-    val prefs = rememberApp().prefs
+    val app = ctx.app
+    val prefs = app.prefs
     var confirmLogout by remember { mutableStateOf(false) }
-    var showLog by remember { mutableStateOf(false) }
+    var displayName by remember { mutableStateOf(prefs.userName) }
+    var profileBusy by remember { mutableStateOf(false) }
+    var profileError by remember { mutableStateOf<String?>(null) }
+    var ownAvatarVersion by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { result ->
+            result.onSuccess { ownAvatarVersion = it }
+        }
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            profileBusy = true
+            profileError = null
+            Bg.run({
+                val raw = ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    val buffer = ByteArray(8192)
+                    val output = ByteArrayOutputStream()
+                    var total = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        require(total <= 16 * 1024 * 1024) { "source image is too large" }
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                } ?: error("empty image")
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+                require(bounds.outWidth > 0 && bounds.outHeight > 0) { "invalid image" }
+                val sample = maxOf(1, (maxOf(bounds.outWidth, bounds.outHeight) + 2047) / 2048)
+                val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("decode failed")
+                val scale = minOf(1f, 2048f / maxOf(bmp.width, bmp.height))
+                val resized = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
+                val out = ByteArrayOutputStream()
+                resized.compress(Bitmap.CompressFormat.JPEG, 88, out)
+                val bytes = out.toByteArray()
+                require(bytes.size <= 2 * 1024 * 1024) { "image too large" }
+                app.net.uploadAvatar(bytes)
+                bytes.size
+            }) { result ->
+                profileBusy = false
+                result.onSuccess {
+                    app.calls.loadContacts()
+                    Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { profile ->
+                        profile.onSuccess { ownAvatarVersion = it }
+                    }
+                    app.uiTick.intValue++
+                }
+                result.onFailure { profileError = it.message ?: "Ошибка загрузки фото" }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -68,7 +130,7 @@ fun SettingsScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
-                            androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                            painterResource(R.drawable.ic_arrow_back),
                             contentDescription = stringResource(R.string.cd_back)
                         )
                     }
@@ -79,12 +141,58 @@ fun SettingsScreen(
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
             SectionTitle(stringResource(R.string.section_account))
             ListItem(
-                headlineContent = { Text(prefs.userName) },
-                supportingContent = { Text(prefs.login) },
+                headlineContent = { Text(prefs.login) },
+                supportingContent = { Text("Логин") },
                 trailingContent = {
                     OutlinedButton(onClick = { confirmLogout = true }) { Text(stringResource(R.string.btn_logout)) }
                 }
             )
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Avatar(prefs.userId, prefs.userName, ownAvatarVersion, 64.dp)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(prefs.userName, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                OutlinedTextField(
+                    value = displayName, onValueChange = { displayName = it },
+                    label = { Text("Имя") }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        profileBusy = true
+                        Bg.run({ app.net.updateName(displayName.trim()) }) { result ->
+                            profileBusy = false
+                            result.onSuccess {
+                                prefs.userName = displayName.trim()
+                                app.calls.loadContacts()
+                                app.uiTick.intValue++
+                            }
+                            result.onFailure { profileError = it.message ?: "Ошибка сохранения имени" }
+                        }
+                    }, enabled = !profileBusy && displayName.trim().isNotEmpty()) { Text("Сохранить имя") }
+                    OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !profileBusy) { Text("Фото") }
+                    OutlinedButton(onClick = {
+                        profileBusy = true
+                        Bg.run({ app.net.deleteOwnAvatar() }) { result ->
+                            profileBusy = false
+                            result.onSuccess {
+                                app.calls.loadContacts()
+                                Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { profile ->
+                                    profile.onSuccess { ownAvatarVersion = it }
+                                }
+                                app.uiTick.intValue++
+                            }
+                            result.onFailure { profileError = it.message ?: "Ошибка удаления фото" }
+                        }
+                    }, enabled = !profileBusy) { Text("Сбросить фото") }
+                }
+                if (profileBusy) CircularProgressIndicator(Modifier.padding(top = 8.dp).size(22.dp), strokeWidth = 2.dp)
+                profileError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
 
             SectionTitle(stringResource(R.string.section_server))
             ListItem(
@@ -141,7 +249,7 @@ fun SettingsScreen(
             ) {
                 ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             }
-            val appDetails = {
+            val appDetails: () -> Unit = {
                 ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)))
             }
             StatusRow(
@@ -153,19 +261,6 @@ fun SettingsScreen(
                 stringResource(R.string.perm_ok), stringResource(R.string.perm_no), appDetails
             )
 
-            SectionTitle(stringResource(R.string.section_updates))
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                UpdateSection(onUpdate)
-            }
-
-            SectionTitle(stringResource(R.string.section_diag))
-            ListItem(
-                headlineContent = { Text(stringResource(R.string.btn_log)) },
-                supportingContent = { Text(stringResource(R.string.diag_hint)) },
-                trailingContent = {
-                    OutlinedButton(onClick = { showLog = true }) { Text(stringResource(R.string.btn_log)) }
-                }
-            )
             HorizontalDivider(Modifier.padding(top = 24.dp))
         }
     }
@@ -182,31 +277,6 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmLogout = false }) { Text(stringResource(R.string.btn_cancel)) }
-            }
-        )
-    }
-
-    if (showLog) {
-        AlertDialog(
-            onDismissRequest = { showLog = false },
-            title = { Text(stringResource(R.string.btn_log)) },
-            text = {
-                Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    Text(
-                        MessageLog.text(ctx) + "\n\nPush token:\n" + prefs.fcmToken,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showLog = false }) { Text(stringResource(R.string.btn_close)) }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("push token", prefs.fcmToken))
-                }) { Text(stringResource(R.string.btn_copy_token)) }
             }
         )
     }

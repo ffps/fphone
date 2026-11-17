@@ -46,7 +46,6 @@ fun LoginScreen(
     initialLogin: String,
     busy: Boolean,
     error: String?,
-    onUpdate: () -> Unit,
     onLogin: (server: String, pin: String, login: String, password: String) -> Unit
 ) {
     var server by rememberSaveable { mutableStateOf(initialServer) }
@@ -144,7 +143,5 @@ fun LoginScreen(
             }
         }
 
-        Spacer(Modifier.height(32.dp))
-        UpdateSection(onUpdate)
     }
 }

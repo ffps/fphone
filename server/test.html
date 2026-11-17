@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fphone test</title>
+<style>
+ body{font:14px system-ui,sans-serif;margin:8px}
+ input{padding:6px;font-size:14px;margin:2px 2px 2px 0}
+ button{margin:3px 3px 3px 0;padding:8px 12px;font-size:14px}
+ label{margin-right:8px;white-space:nowrap}
+ video{width:48%;background:#222;border-radius:4px}
+ #stats{font:12px ui-monospace,monospace;white-space:pre-wrap;border:1px solid #888;padding:6px;min-height:5em;margin-top:4px}
+ #log{font:12px ui-monospace,monospace;white-space:pre-wrap;border:1px solid #888;padding:6px;height:30vh;overflow:auto;margin-top:6px}
+ #incoming{border:2px solid #c80;padding:6px;margin:6px 0}
+</style></head><body>
+<div>
+ <input id="l" placeholder="login" size="10" autocapitalize="off">
+ <input id="p" type="password" placeholder="password" size="10">
+ <button onclick="doLogin()">Login</button>
+ <button onclick="doLogout()">Logout</button>
+ <button onclick="wsOpen()">WS connect</button>
+ <button onclick="wsClose()">WS close</button>
+</div>
+<div>
+ <label><input type="checkbox" id="video" checked> video</label>
+ <label><input type="checkbox" id="rear"> rear camera</label>
+ <b id="st">not logged in</b>
+</div>
+<div id="contacts"></div>
+<div id="incoming" style="display:none">
+ Incoming call from <b id="from"></b>
+ <button onclick="acceptCall()">Accept</button>
+ <button onclick="rejectCall()">Reject</button>
+</div>
+<div id="callbar" style="display:none">
+ Call: <b id="cst"></b>
+ <button onclick="hangup()">Hang up</button>
+ <button onclick="iceRestart()">ICE restart (caller)</button>
+</div>
+<div><video id="rv" autoplay playsinline></video> <video id="lv" autoplay playsinline muted></video></div>
+<div id="stats"></div>
+<div id="log"></div>
+<script>
+const $ = id => document.getElementById(id);
+const t0 = performance.now();
+let token = localStorage.getItem('fphone_tok') || null;
+let ws = null, hb = null, chain = Promise.resolve();
+let contacts = [], online = new Set();
+let call = null;   // {id, role, media, peer}
+let ice = null;    // {servers, policy, ttl} from the server
+let pc = null, stream = null, statsTimer = null, prev = null, connectedSent = false, restarts = 0;
+
+function log(s){
+  const t = ((performance.now() - t0) / 1000).toFixed(1).padStart(7);
+  const el = $('log');
+  el.textContent += t + 's  ' + s + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+function setSt(){ $('st').textContent = token ? 'token present' : 'not logged in'; }
+function devId(){
+  let d = localStorage.getItem('fphone_dev');
+  if (!d){
+    d = 'web-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    localStorage.setItem('fphone_dev', d);
+  }
+  return d;
+}
+function sig(o){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+// ---------- REST ----------
+
+async function api(method, path, body){
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  try {
+    const r = await fetch('/api/v1' + path, {method: method, headers: headers, body: body ? JSON.stringify(body) : undefined});
+    const j = await r.json().catch(() => ({}));
+    log(method + ' ' + path + ' -> ' + r.status + (path === '/contacts' ? '' : ' ' + JSON.stringify(j)));
+    return {status: r.status, json: j};
+  } catch(e){
+    log(method + ' ' + path + ' error: ' + e);
+    return {status: 0, json: {}};
+  }
+}
+async function doLogin(){
+  const r = await api('POST', '/login', {
+    login: $('l').value, password: $('p').value,
+    device: {id: devId(), name: 'web test'}
+  });
+  if (r.json.token){
+    token = r.json.token;
+    localStorage.setItem('fphone_tok', token);
+    setSt();
+  }
+}
+async function doLogout(){
+  await api('POST', '/logout');
+  token = null;
+  localStorage.removeItem('fphone_tok');
+  setSt();
+  cleanupCall();
+}
+async function loadContacts(){
+  const r = await api('GET', '/contacts');
+  if (r.json.contacts){ contacts = r.json.contacts; renderContacts(); }
+}
+function renderContacts(){
+  const el = $('contacts');
+  el.textContent = '';
+  contacts.forEach(c => {
+    const d = document.createElement('div');
+    const on = online.has(c.id);
+    d.append((on ? '\u25CF ' : '\u25CB ') + c.name + ' ');
+    const b = document.createElement('button');
+    b.textContent = 'Call';
+    b.disabled = !on || !!call;
+    b.onclick = () => startCall(c.id);
+    d.append(b);
+    el.append(d);
+  });
+}
+
+// ---------- WebSocket ----------
+
+function wsOpen(){
+  if (ws){ log('WS is already open'); return; }
+  if (!token){ log('log in first'); return; }
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    log('WS open, sending auth');
+    sig({t: 'auth', token: token, proto: 1});
+    hb = setInterval(() => sig({t: 'ping'}), 20000);
+  };
+  ws.onmessage = e => {
+    chain = chain.then(() => onMsg(JSON.parse(e.data))).catch(err => log('error: ' + err));
+  };
+  ws.onclose = e => {
+    log('WS close code=' + e.code + ' reason="' + e.reason + '"');
+    clearInterval(hb); hb = null; ws = null;
+    online = new Set(); renderContacts();
+  };
+  ws.onerror = () => log('WS error');
+}
+function wsClose(){ if (ws) ws.close(1000, 'bye'); }
+
+async function onMsg(m){
+  if (m.t === 'pong') return;
+  log('<- ' + JSON.stringify(m).slice(0, 400));
+  switch (m.t){
+    case 'auth.ok':
+      online = new Set(m.online);
+      loadContacts();
+      if (m.calls && m.calls.length){
+        const c = m.calls[0];
+        log('call in progress after reconnect: ' + c.id + ' state=' + c.state + ' role=' + c.role);
+        call = {id: c.id, role: c.role, media: c.media, peer: c.peer};
+        ice = c.ice;
+        showCall(c.state);
+        if (pc && c.role === 'caller' && (c.state === 'accepted' || c.state === 'active')) await iceRestart();
+      }
+      break;
+    case 'presence':
+      if (m.online) online.add(m.user); else online.delete(m.user);
+      renderContacts();
+      break;
+    case 'call.created':
+      call = {id: m.call.id, role: 'caller', media: m.call.media, peer: m.call.peer};
+      ice = m.ice;
+      showCall('calling');
+      renderContacts();
+      break;
+    case 'call.incoming':
+      if (call) break; // duplicate of the call we already know, or we are busy
+      call = {id: m.call.id, role: 'callee', media: m.call.media, peer: m.call.peer};
+      ice = m.ice;
+      $('from').textContent = m.call.peer.name + ' (' + m.call.media + ')';
+      $('incoming').style.display = 'block';
+      sig({t: 'call.ringing', call: call.id});
+      renderContacts();
+      break;
+    case 'call.ringing':
+      showCall('ringing');
+      break;
+    case 'call.accepted':
+      if (!call || m.call !== call.id) break;
+      $('incoming').style.display = 'none';
+      showCall('accepted');
+      await newPc();
+      if (call.role === 'caller') await makeOffer(false);
+      break;
+    case 'call.signal':
+      await onSignal(m);
+      break;
+    case 'ice':
+      ice = m.ice;
+      break;
+    case 'call.ended':
+      if (call && call.id === m.call){ log('call ended: ' + m.reason); cleanupCall(); }
+      break;
+  }
+}
+
+// ---------- call control ----------
+
+async function getMedia(wantVideo){
+  if (stream) return true;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation: true, noiseSuppression: true},
+      video: wantVideo ? {facingMode: {ideal: $('rear').checked ? 'environment' : 'user'}, width: {ideal: 640}, height: {ideal: 360}, frameRate: {ideal: 24}} : false
+    });
+    $('lv').srcObject = stream;
+    return true;
+  } catch(e){
+    log('getUserMedia error: ' + e);
+    return false;
+  }
+}
+async function startCall(to){
+  if (call) return;
+  if (!ws){ log('connect WS first'); return; }
+  const v = $('video').checked;
+  if (!await getMedia(v)) return;
+  sig({t: 'call.invite', to: to, media: v ? 'video' : 'audio'});
+}
+async function acceptCall(){
+  if (!call) return;
+  if (!await getMedia(call.media === 'video' && $('video').checked)){ rejectCall(); return; }
+  sig({t: 'call.accept', call: call.id});
+}
+function rejectCall(){ if (call) sig({t: 'call.reject', call: call.id}); }
+function hangup(){
+  if (!call) return;
+  if (ws) sig({t: 'call.hangup', call: call.id}); else cleanupCall();
+}
+function showCall(state){
+  $('callbar').style.display = 'block';
+  $('cst').textContent = state + ' (' + call.role + ', ' + call.media + ', peer: ' + call.peer.name + ')';
+}
+function cleanupCall(){
+  closePc();
+  if (stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $('lv').srcObject = null;
+  $('incoming').style.display = 'none';
+  $('callbar').style.display = 'none';
+  call = null; ice = null; restarts = 0;
+  renderContacts();
+}
+
+// ---------- WebRTC ----------
+
+async function newPc(){
+  closePc();
+  const s = ice || {servers: [], policy: 'all'};
+  log('ICE policy=' + s.policy + ' servers=' + JSON.stringify(s.servers.map(x => x.urls)));
+  pc = new RTCPeerConnection({iceServers: s.servers, iceTransportPolicy: s.policy === 'relay' ? 'relay' : 'all'});
+  connectedSent = false; prev = null;
+  pc.onicecandidate = e => {
+    if (e.candidate) sig({t: 'call.signal', call: call.id, kind: 'candidate', candidate: e.candidate});
+  };
+  pc.onicecandidateerror = e => log('ICE candidate error ' + e.errorCode + ' ' + e.errorText + ' ' + e.url);
+  pc.oniceconnectionstatechange = () => log('iceConnectionState: ' + pc.iceConnectionState);
+  pc.onconnectionstatechange = async () => {
+    log('connectionState: ' + pc.connectionState);
+    if (pc.connectionState === 'connected'){
+      $('cst').textContent = 'CONNECTED (' + call.role + ', ' + call.media + ', peer: ' + call.peer.name + ')';
+      if (!connectedSent){ connectedSent = true; sig({t: 'call.connected', call: call.id}); }
+      limitBitrate();
+    }
+    if (pc.connectionState === 'failed' && call && call.role === 'caller' && restarts < 2){
+      restarts++;
+      log('connection failed: trying ICE restart (' + restarts + ')');
+      await iceRestart();
+    }
+  };
+  pc.ontrack = e => { $('rv').srcObject = e.streams[0]; $('rv').play().catch(() => {}); };
+  if (stream) stream.getTracks().forEach(t => pc.addTrack(t, stream));
+  statsTimer = setInterval(showStats, 1000);
+}
+async function makeOffer(restart){
+  const o = await pc.createOffer(restart ? {iceRestart: true} : undefined);
+  await pc.setLocalDescription(o);
+  sig({t: 'call.signal', call: call.id, kind: 'offer', sdp: pc.localDescription.sdp, ice_restart: restart});
+}
+// A real client should first ask the server for fresh TURN credentials ("ice.get") if the old ones are close to expiry.
+async function iceRestart(){
+  if (!pc || !call) return;
+  if (call.role !== 'caller'){ log('in this test page only the caller starts an ICE restart'); return; }
+  log('ICE restart');
+  await makeOffer(true);
+}
+async function onSignal(m){
+  if (!pc || !call || m.call !== call.id) return;
+  if (m.kind === 'offer'){
+    await pc.setRemoteDescription({type: 'offer', sdp: m.sdp});
+    const a = await pc.createAnswer();
+    await pc.setLocalDescription(a);
+    sig({t: 'call.signal', call: call.id, kind: 'answer', sdp: pc.localDescription.sdp});
+  } else if (m.kind === 'answer'){
+    await pc.setRemoteDescription({type: 'answer', sdp: m.sdp});
+  } else if (m.kind === 'candidate'){
+    try { await pc.addIceCandidate(m.candidate); } catch(e){ log('addIceCandidate: ' + e); }
+  }
+}
+async function limitBitrate(){
+  for (const s of pc.getSenders()){
+    if (s.track && s.track.kind === 'video'){
+      const p = s.getParameters();
+      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      p.encodings[0].maxBitrate = 600000;
+      try { await s.setParameters(p); } catch(e){ log('setParameters: ' + e); }
+    }
+  }
+}
+function closePc(){
+  if (statsTimer){ clearInterval(statsTimer); statsTimer = null; }
+  if (pc){ try { pc.close(); } catch(e){} pc = null; }
+  $('rv').srcObject = null;
+  $('stats').textContent = '';
+}
+async function showStats(){
+  if (!pc) return;
+  const st = await pc.getStats();
+  const by = {};
+  st.forEach(s => by[s.id] = s);
+  let pair = null;
+  st.forEach(s => {
+    if (s.type === 'transport' && s.selectedCandidatePairId && by[s.selectedCandidatePairId]) pair = by[s.selectedCandidatePairId];
+  });
+  let out = '';
+  if (pair){
+    const l = by[pair.localCandidateId] || {}, r = by[pair.remoteCandidateId] || {};
+    out += 'PAIR: local ' + l.candidateType + '/' + l.protocol + (l.relayProtocol ? ' (to TURN over ' + l.relayProtocol + ')' : '') +
+           '   remote ' + r.candidateType + '/' + r.protocol + '\n';
+    out += 'RTT ' + (pair.currentRoundTripTime != null ? (pair.currentRoundTripTime * 1000).toFixed(0) : '?') + ' ms\n';
+  } else out += 'no candidate pair yet\n';
+  let rx = 0, tx = 0;
+  st.forEach(s => {
+    if (s.type === 'inbound-rtp'){
+      rx += s.bytesReceived || 0;
+      out += 'IN  ' + s.kind + ': lost ' + (s.packetsLost || 0) + ', jitter ' + ((s.jitter || 0) * 1000).toFixed(0) + ' ms' +
+             (s.kind === 'video' ? ', ' + (s.frameWidth || '?') + 'x' + (s.frameHeight || '?') + ' ' + (s.framesPerSecond || 0) + ' fps' : '') + '\n';
+    }
+    if (s.type === 'outbound-rtp'){
+      tx += s.bytesSent || 0;
+    }
+  });
+  const now = performance.now();
+  if (prev){
+    const dt = (now - prev.t) / 1000;
+    out += 'bitrate: in ' + ((rx - prev.rx) * 8 / dt / 1000).toFixed(0) + ' kbit/s, out ' + ((tx - prev.tx) * 8 / dt / 1000).toFixed(0) + ' kbit/s\n';
+  }
+  prev = {t: now, rx: rx, tx: tx};
+  $('stats').textContent = out;
+}
+
+setSt();
+log('page loaded: ' + location.href);
+</script></body></html>

@@ -82,6 +82,8 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
     private var videoSource: VideoSource? = null
     private var videoTrack: VideoTrack? = null
     private var capturer: CameraVideoCapturer? = null
+    var isFrontCamera: Boolean = true
+        private set
     private var surfaceHelper: SurfaceTextureHelper? = null
     private var remoteVideo: VideoTrack? = null
     private var localSink: VideoSink? = null
@@ -132,6 +134,7 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
             events.onError("no camera found")
             return
         }
+        isFrontCamera = enumerator.isFrontFacing(name)
         val cap = enumerator.createCapturer(name, null)
         if (cap == null) {
             events.onError("cannot open the camera")
@@ -264,6 +267,7 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
 
     fun switchCamera() {
         capturer?.switchCamera(null)
+        isFrontCamera = !isFrontCamera
     }
 
     /** Limits the video bitrate, so that audio keeps enough room on a weak connection. */

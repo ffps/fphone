@@ -2,6 +2,14 @@ package app.fphone.ui
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
@@ -29,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.fphone.CallManager
 import app.fphone.R
@@ -41,7 +49,7 @@ import org.webrtc.SurfaceViewRenderer
 
 /** A video view of the WebRTC library (own camera or the other person). */
 @Composable
-private fun VideoSurface(engine: RtcEngine, local: Boolean, modifier: Modifier) {
+private fun VideoSurface(engine: RtcEngine, local: Boolean, mirror: Boolean = false, modifier: Modifier) {
     val holder = remember { arrayOfNulls<SurfaceViewRenderer>(1) }
     AndroidView(
         modifier = modifier,
@@ -51,7 +59,7 @@ private fun VideoSurface(engine: RtcEngine, local: Boolean, modifier: Modifier) 
                 v.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
                 v.setEnableHardwareScaler(true)
                 if (local) {
-                    v.setMirror(true)
+                    v.setMirror(mirror)
                     v.setZOrderMediaOverlay(true)
                     engine.setLocalSink(v)
                 } else {
@@ -61,6 +69,7 @@ private fun VideoSurface(engine: RtcEngine, local: Boolean, modifier: Modifier) 
             }
         }
     )
+    SideEffect { if (local) holder[0]?.setMirror(mirror) }
     DisposableEffect(engine) {
         onDispose {
             if (local) engine.setLocalSink(null) else engine.setRemoteSink(null)
@@ -71,8 +80,7 @@ private fun VideoSurface(engine: RtcEngine, local: Boolean, modifier: Modifier) 
 }
 
 /**
- * The call screen. It reads everything from CallManager: incoming call (Decline / Answer),
- * calling, connecting, and the running call (audio or video) with the control buttons.
+ * The call screen. Controls stay in one bottom row; video surfaces are independent of the UI layer.
  */
 @Composable
 fun CallScreen(onAccept: () -> Unit, onFinish: () -> Unit) {
@@ -82,7 +90,6 @@ fun CallScreen(onAccept: () -> Unit, onFinish: () -> Unit) {
     val st = calls.state
     val current = calls.call
 
-    // Remember the call while it exists: the screen still shows its name for a moment after the end.
     var last by remember { mutableStateOf<CallManager.CallInfo?>(null) }
     SideEffect { if (current != null) last = current }
     val info = current ?: last
@@ -92,9 +99,7 @@ fun CallScreen(onAccept: () -> Unit, onFinish: () -> Unit) {
         if (st == CallManager.State.IDLE) {
             if (sawCall) delay(1500)
             onFinish()
-        } else {
-            sawCall = true
-        }
+        } else sawCall = true
     }
 
     var seconds by remember { mutableLongStateOf(0L) }
@@ -107,101 +112,103 @@ fun CallScreen(onAccept: () -> Unit, onFinish: () -> Unit) {
 
     val engine = calls.engine
     val inCall = st == CallManager.State.CONNECTING || st == CallManager.State.ACTIVE
-    val videoOn = info?.video == true && engine != null && inCall
+    val videoCall = info?.video == true
+    val remoteVideoVisible = videoCall && engine != null && inCall && calls.remoteCameraOn
     val peerName = info?.peerName ?: calls.lastPeerName
     val avatarVersion = calls.contacts.firstOrNull { it.id == info?.peerId }?.avatar ?: 0L
-    val foreground = if (videoOn) Color.White else MaterialTheme.colorScheme.onBackground
+    val foreground = if (remoteVideoVisible) Color.White else MaterialTheme.colorScheme.onBackground
 
     val status = when (st) {
-        CallManager.State.INCOMING -> stringResource(if (info?.video == true) R.string.call_incoming_video else R.string.call_incoming_audio)
+        CallManager.State.INCOMING -> stringResource(if (videoCall) R.string.call_incoming_video else R.string.call_incoming_audio)
         CallManager.State.OUTGOING -> stringResource(if (calls.ringing) R.string.call_ringing else R.string.call_calling)
         CallManager.State.CONNECTING -> stringResource(R.string.call_connecting)
         CallManager.State.ACTIVE -> "%d:%02d".format(seconds / 60, seconds % 60)
         CallManager.State.IDLE -> Texts.reason(ctx, calls.lastEndReason)
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(if (videoOn) Color.Black else MaterialTheme.colorScheme.background)
-    ) {
-        if (videoOn && engine != null) {
-            VideoSurface(engine, local = false, modifier = Modifier.fillMaxSize())
-            if (calls.cameraOn) {
-                VideoSurface(
-                    engine, local = true,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .safeDrawingPadding()
-                        .padding(12.dp)
-                        .size(110.dp, 150.dp)
-                )
-            }
-        }
+    var previewX by remember { mutableFloatStateOf(0f) }
+    var previewY by remember { mutableFloatStateOf(0f) }
 
-        Column(
-            Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (videoOn) {
-                // Video: the name and time in the corner, the picture is the main thing.
-                Column(Modifier.fillMaxWidth().padding(end = 130.dp)) {
-                    Text(peerName, style = MaterialTheme.typography.titleLarge, color = foreground)
-                    Text(status, style = MaterialTheme.typography.bodyLarge, color = foreground)
-                }
-                Spacer(Modifier.weight(1f))
-            } else {
-                Spacer(Modifier.weight(0.6f))
+    Box(Modifier.fillMaxSize().background(if (remoteVideoVisible) Color.Black else MaterialTheme.colorScheme.background)) {
+        if (remoteVideoVisible && engine != null) {
+            VideoSurface(engine, local = false, modifier = Modifier.fillMaxSize())
+        } else {
+            Column(
+                Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Avatar(info?.peerId ?: 0L, peerName, avatarVersion, 144.dp)
                 Spacer(Modifier.height(20.dp))
                 Text(peerName, style = MaterialTheme.typography.headlineMedium, color = foreground)
                 Spacer(Modifier.height(4.dp))
                 Text(status, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.weight(1f))
             }
+        }
 
-            if (st == CallManager.State.INCOMING) {
-                Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    CallButton(R.drawable.ic_call_end, stringResource(R.string.btn_decline), CallRed, Color.White, 72.dp) {
-                        calls.reject()
-                    }
-                    CallButton(R.drawable.ic_call, stringResource(R.string.btn_accept), CallGreen, Color.White, 72.dp) {
-                        onAccept()
-                    }
-                }
-            } else if (st != CallManager.State.IDLE) {
-                if (inCall) {
-                    val idle = if (videoOn) Color(0x66FFFFFF) else MaterialTheme.colorScheme.secondaryContainer
-                    val idleContent = if (videoOn) Color.White else MaterialTheme.colorScheme.onSecondaryContainer
-                    val on = MaterialTheme.colorScheme.primary
-                    val onContent = MaterialTheme.colorScheme.onPrimary
-                    Row(Modifier.fillMaxWidth().padding(bottom = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        CallButton(
-                            if (calls.muted) R.drawable.ic_mic_off else R.drawable.ic_mic,
-                            stringResource(R.string.call_mic),
-                            if (calls.muted) on else idle, if (calls.muted) onContent else idleContent
-                        ) { calls.toggleMute() }
-                        CallButton(
-                            R.drawable.ic_volume_up, stringResource(R.string.call_speaker),
-                            if (calls.speaker) on else idle, if (calls.speaker) onContent else idleContent
-                        ) { calls.toggleSpeaker() }
-                        if (info?.video == true) {
-                            CallButton(
-                                if (calls.cameraOn) R.drawable.ic_videocam else R.drawable.ic_videocam_off,
-                                stringResource(R.string.call_camera),
-                                if (calls.cameraOn) idle else on, if (calls.cameraOn) idleContent else onContent
-                            ) { calls.toggleCamera() }
-                            CallButton(
-                                R.drawable.ic_videocam, stringResource(R.string.call_flip), idle, idleContent
-                            ) { calls.switchCamera() }
+        if (remoteVideoVisible) {
+            Column(Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(16.dp)) {
+                Text(peerName, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                Text(status, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+            }
+        }
+
+        if (videoCall && engine != null && inCall && calls.cameraOn) {
+            VideoSurface(
+                engine, local = true, mirror = engine.isFrontCamera,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 14.dp, bottom = 112.dp)
+                    .size(112.dp, 150.dp)
+                    .offset { IntOffset(previewX.roundToInt(), previewY.roundToInt()) }
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            previewX += drag.x
+                            previewY += drag.y
                         }
                     }
-                }
-                Box(Modifier.fillMaxWidth().padding(bottom = 24.dp), contentAlignment = Alignment.Center) {
-                    CallButton(R.drawable.ic_call_end, stringResource(R.string.btn_hangup), CallRed, Color.White, 72.dp) {
-                        calls.hangup()
-                    }
-                }
+            )
+        }
+
+        if (st == CallManager.State.INCOMING) {
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().safeDrawingPadding().padding(horizontal = 28.dp, vertical = 24.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                CallButton(R.drawable.ic_call_end, "", CallRed, Color.White, 72.dp) { calls.reject() }
+                CallButton(R.drawable.ic_call, "", CallGreen, Color.White, 72.dp) { onAccept() }
+            }
+        } else if (st != CallManager.State.IDLE) {
+            val idle = if (remoteVideoVisible) Color(0x99000000) else MaterialTheme.colorScheme.secondaryContainer
+            val idleContent = Color.White
+            val active = MaterialTheme.colorScheme.primary
+            Row(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().safeDrawingPadding().padding(horizontal = 6.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (videoCall) CallButton(R.drawable.ic_flip_camera, "", idle, idleContent, 52.dp) { calls.switchCamera() }
+                CallButton(
+                    R.drawable.ic_volume_up, "",
+                    if (calls.speaker) active else idle,
+                    if (calls.speaker) MaterialTheme.colorScheme.onPrimary else idleContent,
+                    52.dp
+                ) { calls.toggleSpeaker() }
+                if (videoCall) CallButton(
+                    if (calls.cameraOn) R.drawable.ic_videocam else R.drawable.ic_videocam_off, "",
+                    if (calls.cameraOn) idle else active,
+                    if (calls.cameraOn) idleContent else MaterialTheme.colorScheme.onPrimary,
+                    52.dp
+                ) { calls.toggleCamera() }
+                CallButton(
+                    if (calls.muted) R.drawable.ic_mic_off else R.drawable.ic_mic, "",
+                    if (calls.muted) active else idle,
+                    if (calls.muted) MaterialTheme.colorScheme.onPrimary else idleContent,
+                    52.dp
+                ) { calls.toggleMute() }
+                CallButton(R.drawable.ic_call_end, "", CallRed, Color.White, 64.dp) { calls.hangup() }
             }
         }
     }

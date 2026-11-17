@@ -22,7 +22,7 @@ import javax.net.ssl.X509TrustManager
 /** Error from the server (code from the JSON error body) or a local network problem. */
 class ApiException(val code: String, val status: Int = 0) : Exception(code)
 
-data class Contact(val id: Long, val name: String, val online: Boolean, val reachable: Boolean, val avatar: Long)
+data class Contact(val id: Long, val name: String, val online: Boolean, val reachable: Boolean, val avatar: Long, val lastSeen: Long)
 
 /** Runs blocking work on a background thread and delivers the result on the main thread. */
 object Bg {
@@ -162,6 +162,38 @@ class Net(private val prefs: Prefs) {
         return result
     }
 
+    fun myProfile(): JSONObject = request("GET", "/me", null, true)
+
+    fun updateName(name: String): JSONObject =
+        request("PUT", "/me", JSONObject().put("name", name), true)
+
+    fun uploadAvatar(jpeg: ByteArray) {
+        val body = jpeg.toRequestBody("image/jpeg".toMediaType())
+        val req = Request.Builder()
+            .url(prefs.server + "/api/v1/me/avatar")
+            .header("Authorization", "Bearer " + prefs.sessionToken)
+            .put(body)
+            .build()
+        client().newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val parsed = try { JSONObject(resp.body?.string() ?: "") } catch (_: Exception) { JSONObject() }
+                val code = parsed.optJSONObject("error")?.optString("code").orEmpty()
+                throw ApiException(if (code.isEmpty()) "http_${resp.code}" else code, resp.code)
+            }
+        }
+    }
+
+    fun deleteOwnAvatar() {
+        val req = Request.Builder()
+            .url(prefs.server + "/api/v1/me/avatar")
+            .header("Authorization", "Bearer " + prefs.sessionToken)
+            .delete()
+            .build()
+        client().newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw ApiException("http_${resp.code}", resp.code)
+        }
+    }
+
     fun contacts(): List<Contact> {
         val arr = request("GET", "/contacts", null, true).optJSONArray("contacts") ?: return emptyList()
         val out = ArrayList<Contact>()
@@ -170,7 +202,8 @@ class Net(private val prefs: Prefs) {
             out.add(
                 Contact(
                     o.getLong("id"), o.optString("name"), o.optBoolean("online"),
-                    o.optBoolean("reachable", o.optBoolean("online")), o.optLong("avatar", 0L)
+                    o.optBoolean("reachable", o.optBoolean("online")), o.optLong("avatar", 0L),
+                    o.optLong("last_seen", 0L)
                 )
             )
         }

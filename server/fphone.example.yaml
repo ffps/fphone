@@ -1,0 +1,82 @@
+# fphone.yaml
+# Relative paths are resolved from the folder of this file.
+
+# Address the server listens on.
+# Behind Keenetic (tls.mode: off) the router proxies https -> http to this address.
+listen: ":8099"
+
+# The database (fphone.db) and, in self-signed mode, tls.crt / tls.key are stored here.
+data_dir: "data"
+
+# Name or IP address that clients use to reach the server from outside.
+# It is put into the certificate (SAN) and into the TURN URLs. With a dynamic public IP
+# use the dynamic DNS name here (see turn.relay_ip below).
+public_host: "domain.com"
+
+# Origins of browser clients that may open a WebSocket ("*" means any).
+# Native apps do not send an Origin header and do not depend on this setting.
+# For the test page behind Keenetic set your own address, for example:
+#   allowed_origins: ["https://domain.com"]
+allowed_origins: ["*"]
+
+# Test page at /test (login, contacts, calls). Turn it off after testing.
+test_page: false
+
+tls:
+  mode: "off"        # off | self-signed | files
+  cert: ""           # used when mode is "files"
+  key: ""
+
+log:
+  file: ""           # empty = stderr (journald), or a path such as /run/fphone/fphone.log (tmpfs)
+  max_size_mb: 2     # rotate the file when it gets this big
+  keep: 1            # how many old files to keep
+  level: "info"      # debug | info | warn | error
+
+auth:
+  token_ttl_days: 180 # sliding lifetime: extended on use, at most once a day
+
+# TURN relay built into this server. Phones behind mobile NAT (CGNAT) send all call
+# media through it. Router setup (port forwarding to the machine that runs fphone):
+#   UDP + TCP  listen_port                         (default 3478)
+#   UDP        relay_port_min .. relay_port_max    (default 49160-49200)
+turn:
+  enabled: false
+  listen_port: 3478
+  # Public IPv4 address that is put into relay addresses.
+  #   a fixed address  - used as is
+  #   empty            - follows public_host: an IPv4 address is used as is, a DNS name is
+  #                      resolved at start and every relay_ip_refresh_seconds, so a dynamic
+  #                      public IP with dynamic DNS is followed automatically.
+  #                      Answers that are LAN addresses are ignored; if your router answers
+  #                      with a LAN address for its own name, set a fixed relay_ip instead.
+  relay_ip: ""
+  relay_ip_refresh_seconds: 3600
+  relay_port_min: 49160
+  relay_port_max: 49200
+  # At every start the server checks how the router returns packets sent to its own public
+  # address ("hairpin NAT"), which is what happens between two phones using this relay,
+  # and writes the result to the log ("hairpin check: ...").
+  # Some routers (Keenetic) return them from their own LAN address (for example 192.168.1.1)
+  # instead of the public IP, and the TURN server would drop them.
+  #   ""      only report the result in the log
+  #   "auto"  report and fix it automatically (recommended)
+  #   "<ip>"  treat packets from this address as coming from the public IP
+  hairpin_src: "auto"
+  ice_policy: "relay"      # relay = all media through this server (stable), all = allow direct paths
+  credential_ttl_minutes: 120
+
+calls:
+  ring_timeout_seconds: 60     # no answer -> call ends with reason "no_answer"
+  reconnect_grace_seconds: 30  # how long a call survives a lost WebSocket of one side
+  max_active: 5                # simultaneous calls
+
+# Push messages (Firebase Cloud Messaging) that wake a phone for an incoming call.
+# The server needs outgoing HTTPS access to oauth2.googleapis.com and fcm.googleapis.com.
+fcm:
+  credentials_file: ""   # service account JSON from the Firebase console; empty = push disabled
+  project_id: ""         # optional, normally read from the credentials file
+  # The push message carries the call ID, caller ID, media type and (if enabled) the caller name.
+  # It travels through Google servers. Set false to leave the name out; the app then shows
+  # the name only after it has connected to this server.
+  send_caller_name: true

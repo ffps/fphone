@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
@@ -39,7 +40,7 @@ fun RecentsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mod
 
     if (entries.isEmpty()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(stringResource(R.string.recents_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Список пуст", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     } else {
         LazyColumn(modifier.fillMaxSize()) {
@@ -52,8 +53,20 @@ fun RecentsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mod
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val directionIcon = when {
+                        missed -> R.drawable.ic_call_missed
+                        e.outgoing -> R.drawable.ic_call_made
+                        else -> R.drawable.ic_call_received
+                    }
+                    val directionTint = when {
+                        missed -> androidx.compose.ui.graphics.Color(0xFFD32F2F)
+                        e.outgoing -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                        else -> androidx.compose.ui.graphics.Color(0xFF1976D2)
+                    }
+                    Icon(painterResource(directionIcon), contentDescription = null, tint = directionTint, modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.width(12.dp))
                     Avatar(e.peerId, e.peerName, contact?.avatar ?: 0L, 48.dp)
-                    Spacer(Modifier.width(16.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
                             e.peerName,

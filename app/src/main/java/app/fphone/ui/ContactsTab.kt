@@ -5,11 +5,22 @@ package app.fphone.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -55,25 +66,58 @@ fun orderedIds(contacts: List<Contact>, order: List<Long>): List<Long> {
 fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Modifier) {
     val app = rememberApp()
     val calls = app.calls
-    val byId = calls.contacts.associateBy { it.id }
-    val sortedIds = orderedIds(calls.contacts, app.prefs.contactOrder)
+    val visibleContacts = calls.contacts.filter { it.reachable || it.online }
+    val byId = visibleContacts.associateBy { it.id }
+    val sortedIds = orderedIds(visibleContacts, app.prefs.contactOrder)
     val ids = remember(sortedIds) { sortedIds.toMutableStateList() }
 
     var dragging by remember { mutableStateOf<Long?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    var pullDistance by remember { mutableFloatStateOf(0f) }
+    val refreshConnection = remember(listState, density) {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                if (source == NestedScrollSource.UserInput && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 && available.y > 0) {
+                    pullDistance += available.y
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (pullDistance > with(density) { 72.dp.toPx() }) scope.launch { calls.loadContacts() }
+                pullDistance = 0f
+                return Velocity.Zero
+            }
+        }
+    }
 
     if (byId.isEmpty()) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(stringResource(R.string.contacts_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        val threshold = with(density) { 72.dp.toPx() }
+        var emptyPull by remember { mutableFloatStateOf(0f) }
+        Box(
+            modifier.fillMaxSize().pointerInput(threshold) {
+                detectVerticalDragGestures(
+                    onVerticalDrag = { change, drag ->
+                        if (drag > 0) emptyPull += drag
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        if (emptyPull > threshold) calls.loadContacts()
+                        emptyPull = 0f
+                    },
+                    onDragCancel = { emptyPull = 0f }
+                )
+            }
+        )
     } else {
         val finishDrag: () -> Unit = {
             dragging = null
             dragOffset = 0f
             app.prefs.contactOrder = ids.toList()
         }
-        LazyColumn(state = listState, modifier = modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = modifier.fillMaxSize().nestedScroll(refreshConnection)) {
             items(ids, key = { it }) { id ->
                 val c = byId[id]
                 if (c != null) {
@@ -125,14 +169,6 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                     )
                 }
             }
-            item {
-                Text(
-                    stringResource(R.string.contacts_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(16.dp)
-                )
-            }
         }
     }
 }
@@ -155,23 +191,25 @@ private fun ContactRow(
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(c.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val status = when {
-                online -> R.string.status_online
-                c.reachable -> R.string.status_offline
-                else -> R.string.status_unavailable
-            }
-            Text(
-                stringResource(status),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            val status = if (online) stringResource(R.string.status_online) else lastSeenText(c.lastSeen)
+            Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val tint = if (canCall) MaterialTheme.colorScheme.primary else LocalContentColor.current
-        IconButton(onClick = { onCall(c.id, c.name, false) }, enabled = canCall) {
+        IconButton(onClick = { onCall(c.id, c.name, true) }, enabled = canCall) {
             Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.cd_call), tint = tint)
         }
-        IconButton(onClick = { onCall(c.id, c.name, true) }, enabled = canCall) {
-            Icon(painterResource(R.drawable.ic_videocam), contentDescription = stringResource(R.string.cd_video), tint = tint)
-        }
+    }
+}
+
+
+private fun lastSeenText(timestamp: Long): String {
+    if (timestamp <= 0L) return "давно не был в сети"
+    val date = Date(timestamp * 1000L)
+    return when {
+        android.text.format.DateUtils.isToday(date.time) ->
+            "был в сети сегодня, " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+        android.text.format.DateUtils.isToday(date.time + android.text.format.DateUtils.DAY_IN_MILLIS) ->
+            "был в сети вчера, " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+        else -> "был в сети " + SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()).format(date)
     }
 }

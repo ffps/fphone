@@ -97,7 +97,7 @@
     <string name="tab_recents">Последние</string>
     <string name="menu_settings">Настройки</string>
     <string name="menu_clear_recents">Очистить последние</string>
-    <string name="recents_empty">Звонков пока не было</string>
+    <string name="recents_empty">Список пуст</string>
     <string name="contacts_empty">Других пользователей пока нет</string>
     <string name="contacts_hint">Чтобы изменить порядок, нажмите на контакт и удерживайте</string>
     <string name="status_online">в сети</string>

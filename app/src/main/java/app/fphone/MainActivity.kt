@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     private var installRequested = false
     private var pendingCall: Triple<Long, String, Boolean>? = null
 
-    /** Background permission request (audio, camera, notifications) — no follow-up action. */
+    /** Background permission request (audio, camera, notifications) ï¿½ no follow-up action. */
     private val permissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -67,9 +67,10 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         enableEdgeToEdge()
         dynamicColor.value = app.prefs.dynamicColor
         startTab.intValue = intent.getIntExtra(EXTRA_TAB, 0)
+        if (startTab.intValue == 1) Notifications.clearMissed(this)
         setContent {
-            FPhoneTheme(dynamicColor.value) {
-                val prefs = rememberApp().prefs
+            val prefs = rememberApp().prefs
+            FPhoneTheme(dynamicColor.value, forceLight = !prefs.loggedIn) {
                 if (!prefs.loggedIn) {
                     LoginScreen(
                         initialServer = prefs.server,
@@ -77,7 +78,6 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
                         initialLogin = prefs.login,
                         busy = loginBusy.value,
                         error = loginError.value,
-                        onUpdate = { updateClicked() },
                         onLogin = { server, pin, login, password -> doLogin(server, pin, login, password) }
                     )
                 } else {
@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         super.onNewIntent(intent)
         setIntent(intent)
         startTab.intValue = intent.getIntExtra(EXTRA_TAB, 0)
+        if (startTab.intValue == 1) Notifications.clearMissed(this)
     }
 
     override fun onStart() {

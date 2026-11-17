@@ -7,3 +7,10 @@ local.properties
 *.jks
 # Firebase config comes from a repository secret, never commit it
 app/google-services.json
+
+debug*
+*.log
+server/fphone
+server/fphone.exe
+server/fphone.yaml
+server/data

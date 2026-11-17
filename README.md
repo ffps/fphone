@@ -17,22 +17,19 @@ Material 3 (Jetpack Compose); light or dark theme and text size follow the syste
 The colors are green like the app icon; "Colors from the wallpaper" in the settings switches to
 Material You colors on Android 12 and newer.
 
-* **Contacts**: people with their photo and an "online" dot, buttons for an audio or a video call.
+* **Contacts**: people with their photo and an "online" dot, a single call button that starts a video call (the camera can be switched off during the call).
   Press and hold a contact and drag it to change the order (the order is kept on the phone). A
   contact whose app is closed can still be called: the phone is woken up by a push message.
 * **Recents**: the call history of this phone (missed calls in red, a badge on the tab and a
   notification for a missed call). The button on the right calls back.
 * **Settings** (menu with three dots, top right): account, server, colors, the state of the
   permissions that calls need (notifications, full screen notifications, battery, microphone,
-  camera), updates and the diagnostic log.
-* **Call screen**: incoming call (Decline / Answer), calling, and the running call with buttons for
-  the microphone, the loudspeaker, the camera and its switching, and the red hang-up button.
+  camera), and call reliability permissions. **About** contains the version, updates, diagnostic log and project link.
+* **Call screen**: incoming call (Decline / Answer), calling, and the running call with compact icon-only controls in one bottom row, a movable local preview and the remote user's avatar when their camera is off.
 
 ### Photos of users
 
-The server gives a photo to every user that has a JPEG file `avatars/<user id>.jpg` in its data
-folder (see the server config). The app downloads a photo once and keeps it; a changed file is
-picked up automatically. Users without a photo get a colored circle with the first letter.
+The server uses `avatars/<login>.jpg` as the administrator-set photo and `avatars/<login>.user.jpg` as the photo uploaded by the user. The user photo takes priority; removing it restores the administrator-set photo. Users can change their display name and upload or reset their own photo in Settings. The app downloads a photo once and keeps it; a changed file is picked up automatically. User uploads are JPEG images up to 2 MiB and 2048×2048 pixels. Users without a photo get a colored circle with the first letter.
 
 ## First start
 

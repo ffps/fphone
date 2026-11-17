@@ -66,8 +66,8 @@ private val DarkColors = darkColorScheme(
 
 /** Light or dark follows the system; text size follows the system font scale. */
 @Composable
-fun FPhoneTheme(dynamicColor: Boolean, content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun FPhoneTheme(dynamicColor: Boolean, forceLight: Boolean = false, content: @Composable () -> Unit) {
+    val dark = if (forceLight) false else isSystemInDarkTheme()
     val ctx = LocalContext.current
     val scheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= 31 ->

@@ -46,21 +46,33 @@ object Notifications {
         nm.createNotificationChannel(misc)
     }
 
-    /** Notification about a missed incoming call; it opens the "Recents" tab. */
+    /** Aggregated notification about missed incoming calls. */
     fun showMissed(ctx: Context, name: String) {
         ensureChannels(ctx)
+        val prefs = ctx.getSharedPreferences("fphone_notifications", Context.MODE_PRIVATE)
+        val count = prefs.getInt("missed_count", 0) + 1
+        prefs.edit().putInt("missed_count", count).putString("missed_last_name", name).apply()
         val open = PendingIntent.getActivity(
             ctx, 7, Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, 1), immutable()
         )
+        val title = if (count == 1) ctx.getString(R.string.notif_missed_title)
+            else "Пропущенные звонки: $count"
         val n = NotificationCompat.Builder(ctx, CH_MISC)
             .setSmallIcon(R.drawable.ic_stat_call)
-            .setContentTitle(ctx.getString(R.string.notif_missed_title))
+            .setContentTitle(title)
             .setContentText(name)
+            .setNumber(count)
             .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
             .setAutoCancel(true)
             .setContentIntent(open)
             .build()
-        ctx.getSystemService(NotificationManager::class.java).notify(2000 + (name.hashCode() and 0xff), n)
+        ctx.getSystemService(NotificationManager::class.java).notify(2000, n)
+    }
+
+    fun clearMissed(ctx: Context) {
+        ctx.getSharedPreferences("fphone_notifications", Context.MODE_PRIVATE).edit()
+            .remove("missed_count").remove("missed_last_name").apply()
+        ctx.getSystemService(NotificationManager::class.java).cancel(2000)
     }
 
     /** Simple notification for the test message of "fphone push-test" on the server. */

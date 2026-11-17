@@ -64,6 +64,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         private set
     var cameraOn = true
         private set
+    var remoteCameraOn = true
+        private set
     var speaker = false
         private set
     var connectedSince = 0L // SystemClock.elapsedRealtime() when the media connection came up
@@ -268,6 +270,11 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             pendingInvite = null
             send(invite)
         }
+        val currentCall = call
+        if (currentCall != null && currentCall.id.isNotEmpty() && currentCall.video &&
+            (state == State.CONNECTING || state == State.ACTIVE)) {
+            send(JSONObject().put("t", "call.signal").put("call", currentCall.id).put("kind", "camera").put("enabled", cameraOn))
+        }
         notifyChanged()
     }
 
@@ -295,6 +302,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         ringing = false
         lastEndReason = null
         cameraWanted = video
+        remoteCameraOn = video
         val invite = JSONObject()
             .put("t", "call.invite")
             .put("to", peerId)
@@ -366,11 +374,14 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     fun toggleCamera() {
         cameraOn = !cameraOn
         engine?.setVideoEnabled(cameraOn)
+        val c = call
+        if (c != null && c.id.isNotEmpty()) send(JSONObject().put("t", "call.signal").put("call", c.id).put("kind", "camera").put("enabled", cameraOn))
         notifyChanged()
     }
 
     fun switchCamera() {
         engine?.switchCamera()
+        notifyChanged()
     }
 
     fun toggleSpeaker() {
@@ -393,6 +404,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             else -> contacts.firstOrNull { it.id == fromId }?.name ?: app.getString(R.string.unknown_caller)
         }
         val c = CallInfo(callId, false, fromId, name, video)
+        remoteCameraOn = video
         call = c
         state = State.INCOMING
         lastEndReason = null
@@ -441,6 +453,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         if (c != null && c.id != id) return // another call is going on
         if (c == null) {
             c = CallInfo(id, false, peer.getLong("id"), peer.optString("name"), info.optString("media") == "video")
+            remoteCameraOn = c.video
             call = c
             state = State.INCOMING
             lastEndReason = null
@@ -468,6 +481,11 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private fun onSignal(m: JSONObject) {
         val c = call ?: return
         if (m.optString("call") != c.id) return
+        if (m.optString("kind") == "camera") {
+            remoteCameraOn = m.optBoolean("enabled", true)
+            notifyChanged()
+            return
+        }
         val e = engine ?: return
         when (m.optString("kind")) {
             "offer" -> e.onRemoteOffer(m.optString("sdp")) { sdp -> sendSignal("answer", sdp, false) }
@@ -683,6 +701,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         restarts = 0
         muted = false
         cameraOn = true
+        remoteCameraOn = true
         speaker = false
         notifyChanged()
         maybeDisconnect()

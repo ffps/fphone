@@ -3,13 +3,16 @@
 package app.fphone.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Person
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
@@ -43,6 +46,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.fphone.CallActivity
 import app.fphone.CallManager
+import app.fphone.Notifications
 import app.fphone.R
 import kotlinx.coroutines.delay
 
@@ -64,18 +68,24 @@ fun MainScreen(
     val calls = app.calls
     var tab by rememberSaveable(startTab) { mutableIntStateOf(startTab) }
     var settings by rememberSaveable { mutableStateOf(false) }
+    var about by rememberSaveable { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(tab) {
-        if (tab == 1) app.history.markSeen()
+        if (tab == 1) {
+            app.history.markSeen()
+            Notifications.clearMissed(ctx)
+        }
     }
 
-    if (settings) {
+    if (about) {
+        BackHandler { about = false }
+        AboutScreen(onUpdate = onUpdate, onBack = { about = false })
+    } else if (settings) {
         BackHandler { settings = false }
         SettingsScreen(
             dynamicColor = dynamicColor,
             onDynamicColor = onDynamicColor,
-            onUpdate = onUpdate,
             onLogout = {
                 settings = false
                 onLogout()
@@ -87,22 +97,43 @@ fun MainScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(stringResource(if (tab == 0) R.string.tab_contacts else R.string.tab_recents)) },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.padding(end = 8.dp).size(30.dp).clip(RoundedCornerShape(7.dp))
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(30.dp))
+                            }
+                            Text(stringResource(if (tab == 0) R.string.tab_contacts else R.string.tab_recents))
+                        }
+                    },
                     actions = {
                         IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.cd_menu))
+                            Icon(painterResource(R.drawable.ic_more_vert), contentDescription = stringResource(R.string.cd_menu))
                         }
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.menu_settings)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_settings), contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     settings = true
                                 }
                             )
+                            DropdownMenuItem(
+                                text = { Text("О приложении") },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_info), contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    about = true
+                                }
+                            )
                             if (tab == 1) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.menu_clear_recents)) },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_delete), contentDescription = null) },
                                     onClick = {
                                         menuOpen = false
                                         app.history.clear()
@@ -118,7 +149,7 @@ fun MainScreen(
                     NavigationBarItem(
                         selected = tab == 0,
                         onClick = { tab = 0 },
-                        icon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        icon = { Icon(painterResource(R.drawable.ic_person), contentDescription = null) },
                         label = { Text(stringResource(R.string.tab_contacts)) }
                     )
                     NavigationBarItem(
