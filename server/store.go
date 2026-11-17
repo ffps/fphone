@@ -152,6 +152,17 @@ func (s *Store) UserByLogin(login string) (User, string, error) {
 	return u, hash, nil
 }
 
+func (s *Store) SetName(userID int64, name string) error {
+	res, err := s.db.Exec(`UPDATE users SET name=? WHERE id=?`, name, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetPassword changes the password and revokes all tokens of the user.
 func (s *Store) SetPassword(login, passHash string) error {
 	res, err := s.db.Exec(`UPDATE users SET pass_hash=? WHERE login=?`, passHash, login)
@@ -215,13 +226,15 @@ func (s *Store) ListUsers() ([]UserRow, error) {
 // user has a push token, so the user can be woken up for a call while the app is closed.
 type ContactRow struct {
 	User
-	HasPush bool
+	HasPush  bool
+	LastSeen int64
 }
 
 // Contacts returns all active users except the one who asks.
 func (s *Store) Contacts(exceptUserID int64) ([]ContactRow, error) {
 	rows, err := s.db.Query(`SELECT u.id,u.login,u.name,
-			EXISTS(SELECT 1 FROM devices d WHERE d.user_id=u.id AND d.fcm_token<>'')
+			EXISTS(SELECT 1 FROM devices d WHERE d.user_id=u.id AND d.fcm_token<>''),
+			COALESCE((SELECT MAX(d.last_seen) FROM devices d WHERE d.user_id=u.id),0)
 		FROM users u WHERE u.disabled=0 AND u.id<>? ORDER BY u.name`, exceptUserID)
 	if err != nil {
 		return nil, err
@@ -231,7 +244,7 @@ func (s *Store) Contacts(exceptUserID int64) ([]ContactRow, error) {
 	for rows.Next() {
 		var c ContactRow
 		var push int
-		if err := rows.Scan(&c.ID, &c.Login, &c.Name, &push); err != nil {
+		if err := rows.Scan(&c.ID, &c.Login, &c.Name, &push, &c.LastSeen); err != nil {
 			return nil, err
 		}
 		c.HasPush = push != 0
@@ -307,6 +320,10 @@ func (s *Store) Revalidate(deviceID int64) bool {
 	}
 	s.maybeExtend(deviceID, last, now)
 	return true
+}
+
+func (s *Store) MarkSeen(deviceID int64) {
+	_, _ = s.db.Exec(`UPDATE devices SET last_seen=? WHERE id=?`, time.Now().Unix(), deviceID)
 }
 
 func (s *Store) SetFCM(deviceID int64, fcm string) error {

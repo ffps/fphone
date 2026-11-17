@@ -11,22 +11,9 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
-	"unicode"
 
 	"golang.org/x/term"
 )
-
-func validLogin(s string) bool {
-	if s == "" || len(s) > 64 {
-		return false
-	}
-	for _, c := range s {
-		if !(unicode.IsLetter(c) || unicode.IsDigit(c) || c == '.' || c == '_' || c == '-' || c == '@') {
-			return false
-		}
-	}
-	return true
-}
 
 func fmtTime(ts int64) string {
 	if ts <= 0 {
@@ -117,7 +104,7 @@ func userAdd(store *Store, args []string) error {
 	}
 	login := fs.Arg(0)
 	if !validLogin(login) {
-		return errors.New("login must be 1-64 characters: letters, digits, . _ - @")
+		return errors.New("login must be 1-64 characters: first character A-Z, a-z or _, then A-Z, a-z, 0-9 or _")
 	}
 	pw, err := readNewPassword()
 	if err != nil {

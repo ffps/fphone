@@ -80,7 +80,7 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
     val refreshConnection = remember(listState, density) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                if (source == NestedScrollSource.UserInput && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 && available.y > 0) {
+                if (source == NestedScrollSource.Drag && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 && available.y > 0) {
                     pullDistance += available.y
                 }
                 return androidx.compose.ui.geometry.Offset.Zero

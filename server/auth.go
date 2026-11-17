@@ -14,6 +14,24 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
+func validLogin(s string) bool {
+	if len(s) < 1 || len(s) > 64 {
+		return false
+	}
+	for i, c := range s {
+		letter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
+		digit := c >= '0' && c <= '9'
+		if i == 0 {
+			if !letter {
+				return false
+			}
+		} else if !letter && !digit {
+			return false
+		}
+	}
+	return true
+}
+
 // ---------- passwords: argon2id ----------
 
 const (

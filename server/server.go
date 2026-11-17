@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"image/jpeg"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -52,6 +55,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/device", s.authed(s.handleDevice))
 	mux.HandleFunc("GET /api/v1/contacts", s.authed(s.handleContacts))
 	mux.HandleFunc("GET /api/v1/users/{id}/avatar", s.authed(s.handleAvatar))
+	mux.HandleFunc("GET /api/v1/me", s.authed(s.handleMeGet))
+	mux.HandleFunc("PUT /api/v1/me", s.authed(s.handleMe))
+	mux.HandleFunc("PUT /api/v1/me/avatar", s.authed(s.handleUploadAvatar))
+	mux.HandleFunc("DELETE /api/v1/me/avatar", s.authed(s.handleDeleteAvatar))
 	mux.HandleFunc("GET /ws", s.hub.ServeWS)
 	if s.cfg.TestPage {
 		mux.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +103,11 @@ func (s *Server) rest(h http.HandlerFunc) http.HandlerFunc {
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Now().Add(15 * time.Second))
 		_ = rc.SetWriteDeadline(time.Now().Add(15 * time.Second))
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		limit := int64(64 << 10)
+		if r.URL.Path == "/api/v1/me/avatar" {
+			limit = maxAvatarBytes
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		w.Header().Set("Cache-Control", "no-store")
 		h(w, r)
 	}
@@ -169,9 +180,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	login := strings.TrimSpace(req.Login)
-	if login == "" || len(login) > 64 || req.Password == "" || len(req.Password) > 256 || !validDeviceID(req.Device.ID) {
+	if !validLogin(login) || req.Password == "" || len(req.Password) > 256 || !validDeviceID(req.Device.ID) {
 		writeErr(w, http.StatusBadRequest, "bad_request",
-			"login, password and device.id are required (device.id: up to 64 characters: letters, digits, - _ .)")
+			"login must be an ASCII identifier (1-64 characters); password and device.id are required")
 		return
 	}
 	if len(req.Device.FCMToken) > 4096 {
@@ -261,6 +272,7 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Se
 		Online    bool   `json:"online"`
 		Reachable bool   `json:"reachable"`
 		Avatar    int64  `json:"avatar"` // version of the photo (file time), 0 = no photo
+		LastSeen  int64  `json:"last_seen"`
 	}
 	out := make([]contact, 0, len(users))
 	for _, u := range users {
@@ -268,50 +280,157 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Se
 		out = append(out, contact{
 			ID: u.ID, Name: u.Name, Online: on,
 			Reachable: on || (canPush && u.HasPush),
-			Avatar:    s.avatarVersion(u.ID),
+			Avatar:    s.avatarVersionForLogin(u.Login),
+			LastSeen:  u.LastSeen,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": out})
 }
 
-// ---------- user photos ----------
-//
-// A photo is a JPEG file <data_dir>/avatars/<user id>.jpg put there by the administrator
-// (the ID is shown by "fphone user list"). The contact list carries the file time as the
-// "version" of the photo, so apps download a photo again only when the file changes.
+// ---------- user photos and profile ----------
 
 const maxAvatarBytes = 2 << 20
+const maxAvatarDimension = 2048
 
-func (s *Server) avatarPath(id int64) string {
-	return filepath.Join(s.cfg.DataDir, "avatars", strconv.FormatInt(id, 10)+".jpg")
+func (s *Server) avatarPaths(login string) (user, admin string) {
+	dir := filepath.Join(s.cfg.DataDir, "avatars")
+	return filepath.Join(dir, login+".user.jpg"), filepath.Join(dir, login+".jpg")
 }
 
-// avatarVersion returns the modification time of the photo (unix seconds), or 0 if there is none.
+func (s *Server) avatarFile(u User) string {
+	user, admin := s.avatarPaths(u.Login)
+	if st, err := os.Stat(user); err == nil && !st.IsDir() && st.Size() > 0 && st.Size() <= maxAvatarBytes {
+		return user
+	}
+	return admin
+}
+
 func (s *Server) avatarVersion(id int64) int64 {
-	st, err := os.Stat(s.avatarPath(id))
+	u, err := s.store.UserByID(id)
+	if err != nil {
+		return 0
+	}
+	return s.avatarVersionForLogin(u.Login)
+}
+
+func (s *Server) avatarVersionForLogin(login string) int64 {
+	user, admin := s.avatarPaths(login)
+	path := admin
+	if st, err := os.Stat(user); err == nil && !st.IsDir() && st.Size() > 0 && st.Size() <= maxAvatarBytes {
+		path = user
+	}
+	st, err := os.Stat(path)
 	if err != nil || st.IsDir() || st.Size() == 0 || st.Size() > maxAvatarBytes {
 		return 0
 	}
-	return st.ModTime().Unix()
+	return st.ModTime().UnixNano()
+}
+
+func (s *Server) handleMeGet(w http.ResponseWriter, r *http.Request, sess *Session) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":   sess.User,
+		"avatar": s.avatarVersion(sess.User.ID),
+	})
+}
+
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, sess *Session) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len([]rune(name)) > 64 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "name must contain 1-64 characters")
+		return
+	}
+	if err := s.store.SetName(sess.User.ID, name); err != nil {
+		serverErr(w, err)
+		return
+	}
+	sess.User.Name = name
+	writeJSON(w, http.StatusOK, map[string]any{"user": sess.User})
+}
+
+func (s *Server) handleUploadAvatar(w http.ResponseWriter, r *http.Request, sess *Session) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxAvatarBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil || len(data) < 4 || len(data) > maxAvatarBytes {
+		writeErr(w, http.StatusBadRequest, "bad_avatar", "avatar must be a JPEG up to 2 MiB")
+		return
+	}
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width < 1 || cfg.Height < 1 || cfg.Width > maxAvatarDimension || cfg.Height > maxAvatarDimension {
+		writeErr(w, http.StatusBadRequest, "bad_avatar", "invalid JPEG or image dimensions exceed 2048x2048")
+		return
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(data)); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_avatar", "invalid JPEG data")
+		return
+	}
+	userPath, _ := s.avatarPaths(sess.User.Login)
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		serverErr(w, err)
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(userPath), ".avatar-*.tmp")
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		serverErr(w, err)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		serverErr(w, err)
+		return
+	}
+	if err := os.Rename(tmpName, userPath); err != nil {
+		_ = os.Remove(tmpName)
+		serverErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "avatar": s.avatarVersion(sess.User.ID)})
+}
+
+func (s *Server) handleDeleteAvatar(w http.ResponseWriter, r *http.Request, sess *Session) {
+	userPath, _ := s.avatarPaths(sess.User.Login)
+	if err := os.Remove(userPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		serverErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "avatar": s.avatarVersion(sess.User.ID)})
 }
 
 func (s *Server) handleAvatar(w http.ResponseWriter, r *http.Request, sess *Session) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || id <= 0 || s.avatarVersion(id) == 0 {
+	if err != nil || id <= 0 {
 		writeErr(w, http.StatusNotFound, "not_found", "no photo")
 		return
 	}
-	f, err := os.Open(s.avatarPath(id))
+	u, err := s.store.UserByID(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "no photo")
+		return
+	}
+	path := s.avatarFile(u)
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() || st.Size() == 0 || st.Size() > maxAvatarBytes {
+		writeErr(w, http.StatusNotFound, "not_found", "no photo")
+		return
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "no photo")
 		return
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		serverErr(w, err)
-		return
-	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	http.ServeContent(w, r, "avatar.jpg", st.ModTime(), f)

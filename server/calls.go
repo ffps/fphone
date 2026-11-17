@@ -272,6 +272,7 @@ func (m *Calls) Handle(c *Client, typ string, data []byte) {
 		SDP        string          `json:"sdp"`
 		Candidate  json.RawMessage `json:"candidate"`
 		ICERestart bool            `json:"ice_restart"`
+		Enabled    bool            `json:"enabled"`
 	}
 	if err := json.Unmarshal(data, &req); err != nil {
 		c.sendErr("bad_json", typ)
@@ -281,7 +282,7 @@ func (m *Calls) Handle(c *Client, typ string, data []byte) {
 	case "call.invite":
 		m.invite(c, req.To, req.Media)
 	case "call.signal":
-		m.signal(c, req.Call, req.Kind, req.SDP, req.Candidate, req.ICERestart)
+		m.signal(c, req.Call, req.Kind, req.SDP, req.Candidate, req.ICERestart, req.Enabled)
 	default:
 		m.simple(c, typ, req.Call)
 	}
@@ -296,6 +297,11 @@ func (m *Calls) invite(c *Client, to int64, media string) {
 	callee, err := m.store.UserByID(to)
 	if err != nil || callee.Disabled {
 		c.sendErr("unknown_user", ref)
+		return
+	}
+	caller, err := m.store.UserByID(c.sess.User.ID)
+	if err != nil {
+		c.sendErr("internal", ref)
 		return
 	}
 
@@ -317,7 +323,7 @@ func (m *Calls) invite(c *Client, to int64, media string) {
 		CalleeID:     to,
 		CallerLogin:  c.sess.User.Login,
 		CalleeLogin:  callee.Login,
-		CallerName:   c.sess.User.Name,
+		CallerName:   caller.Name,
 		CalleeName:   callee.Name,
 		CallerDevice: c.sess.DeviceID,
 		Media:        media,
@@ -445,11 +451,11 @@ func (m *Calls) simple(c *Client, typ, callID string) {
 	}
 }
 
-// signal forwards WebRTC signaling (offer, answer, candidate) to the other side of the call.
+// signal forwards WebRTC signaling and camera on/off state to the other side of the call.
 // The server does not look inside the SDP.
-func (m *Calls) signal(c *Client, callID, kind, sdp string, cand json.RawMessage, restart bool) {
+func (m *Calls) signal(c *Client, callID, kind, sdp string, cand json.RawMessage, restart, enabled bool) {
 	const ref = "call.signal"
-	if kind != "offer" && kind != "answer" && kind != "candidate" {
+	if kind != "offer" && kind != "answer" && kind != "candidate" && kind != "camera" {
 		c.sendErr("bad_request", ref)
 		return
 	}
@@ -489,6 +495,9 @@ func (m *Calls) signal(c *Client, callID, kind, sdp string, cand json.RawMessage
 	}
 	if restart {
 		msg["ice_restart"] = true
+	}
+	if kind == "camera" {
+		msg["enabled"] = enabled
 	}
 	m.hub.SendToDevice(target, msg)
 }

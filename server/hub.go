@@ -152,6 +152,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	c.close(websocket.CloseNormalClosure, "")
 	last := h.remove(c)
+	h.store.MarkSeen(sess.DeviceID)
 	if last {
 		h.broadcastPresence(sess.User.ID, false)
 	}
