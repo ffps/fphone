@@ -223,7 +223,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private fun startRingback() {
         stopRingback()
         try {
-            ringback = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 70).also {
+            ringback = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 100).also {
                 it.startTone(ToneGenerator.TONE_SUP_RINGTONE)
             }
             MessageLog.add(app, "CALL", "local ringback tone started")
