@@ -25,12 +25,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -387,29 +389,42 @@ private fun PhotoSettingsScreen(
     }) { padding ->
         Column(Modifier.padding(padding).fillMaxWidth().padding(24.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
             val bmp = preview
-            if (bmp == null) currentAvatar() else Image(
-                bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(220.dp)
-                    .graphicsLayer {
-                        rotationZ = rotation.toFloat()
-                        scaleX = zoom
-                        scaleY = zoom
-                        translationX = panX * size.width
-                        translationY = panY * size.height
-                    }
-                    .clip(RoundedCornerShape(16.dp))
-                    .pointerInput(uri) {
-                        detectTransformGestures { _, pan, gestureZoom, _ ->
-                            zoom = (zoom * gestureZoom).coerceIn(1f, 5f)
-                            val limit = (zoom - 1f) / 2f
-                            panX = (panX + pan.x / size.width).coerceIn(-limit, limit)
-                            panY = (panY + pan.y / size.height).coerceIn(-limit, limit)
+            if (bmp == null) {
+                currentAvatar()
+            } else {
+                Box(
+                    Modifier
+                        .size(220.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .pointerInput(uri) {
+                            detectTransformGestures { _, pan, gestureZoom, _ ->
+                                val nextZoom = (zoom * gestureZoom).coerceIn(1f, 5f)
+                                zoom = nextZoom
+                                val minSide = minOf(bmp.width, bmp.height).toFloat()
+                                val imageWidthRatio = (if (rotation % 180 == 0) bmp.width else bmp.height) / minSide
+                                val imageHeightRatio = (if (rotation % 180 == 0) bmp.height else bmp.width) / minSide
+                                val limitX = (nextZoom * imageWidthRatio - 1f) / 2f
+                                val limitY = (nextZoom * imageHeightRatio - 1f) / 2f
+                                panX = (panX + pan.x / size.width).coerceIn(-limitX, limitX)
+                                panY = (panY + pan.y / size.height).coerceIn(-limitY, limitY)
+                            }
                         }
-                    }
-            )
-            if (bmp != null) {
-                Text("Масштаб: двумя пальцами, перемещение: одним пальцем", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ) {
+                    Image(
+                        bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                rotationZ = rotation.toFloat()
+                                scaleX = zoom
+                                scaleY = zoom
+                                translationX = panX * size.width
+                                translationY = panY * size.height
+                            }
+                    )
+                }
             }
             Spacer(Modifier.height(20.dp))
             OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !busy && !processing) { Text("Выбрать фото") }
