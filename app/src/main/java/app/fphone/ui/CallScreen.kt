@@ -178,7 +178,7 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
             Row(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().safeDrawingPadding().padding(horizontal = 28.dp, vertical = 24.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
                 CallButton(R.drawable.ic_call_end, "", CallRed, Color.White, 72.dp) { calls.reject() }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

@@ -23,6 +23,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,6 +55,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -165,7 +167,10 @@ fun SettingsScreen(
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 OutlinedTextField(
-                    value = displayName, onValueChange = { displayName = it },
+                    value = displayName, onValueChange = {
+                        displayName = it
+                        profileError = null
+                    },
                     label = { Text("Имя") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     trailingIcon = {
                         IconButton(onClick = {
@@ -310,7 +315,15 @@ private fun decodePreview(ctx: Context, uri: Uri): Bitmap? {
     }
 }
 
-private fun appBgRun(ctx: Context, uri: Uri, rotation: Int, done: (Result<ByteArray>) -> Unit) {
+private fun appBgRun(
+    ctx: Context,
+    uri: Uri,
+    rotation: Int,
+    scale: Float,
+    panX: Float,
+    panY: Float,
+    done: (Result<ByteArray>) -> Unit
+) {
     Bg.run({
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -319,12 +332,21 @@ private fun appBgRun(ctx: Context, uri: Uri, rotation: Int, done: (Result<ByteAr
         val source = ctx.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         } ?: error("Не удалось открыть фото")
-        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-        val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-        val side = minOf(rotated.width, rotated.height)
-        val square = Bitmap.createBitmap(rotated, (rotated.width - side) / 2, (rotated.height - side) / 2, side, side)
-        val resized = Bitmap.createScaledBitmap(square, 400, 400, true)
-        ByteArrayOutputStream().also { resized.compress(Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
+        val rotateMatrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, rotateMatrix, true)
+        val side = minOf(rotated.width, rotated.height).toFloat()
+        val output = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888)
+        val outputCanvas = android.graphics.Canvas(output)
+        val outputScale = 400f / side * scale
+        val outputMatrix = Matrix().apply {
+            setValues(floatArrayOf(
+                outputScale, 0f, 200f + panX * 400f - rotated.width * outputScale / 2f,
+                0f, outputScale, 200f + panY * 400f - rotated.height * outputScale / 2f,
+                0f, 0f, 1f
+            ))
+        }
+        outputCanvas.drawBitmap(rotated, outputMatrix, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG))
+        ByteArrayOutputStream().also { output.compress(Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
     }, done)
 }
 
@@ -341,10 +363,13 @@ private fun PhotoSettingsScreen(
     var uri by remember { mutableStateOf<Uri?>(null) }
     var preview by remember { mutableStateOf<Bitmap?>(null) }
     var rotation by remember { mutableIntStateOf(0) }
+    var zoom by remember { mutableStateOf(1f) }
+    var panX by remember { mutableStateOf(0f) }
+    var panY by remember { mutableStateOf(0f) }
     var error by remember { mutableStateOf<String?>(null) }
     var processing by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { selected ->
-        uri = selected; rotation = 0; error = null
+        uri = selected; rotation = 0; zoom = 1f; panX = 0f; panY = 0f; error = null
     }
     LaunchedEffect(uri) {
         val selected = uri ?: return@LaunchedEffect
@@ -364,16 +389,39 @@ private fun PhotoSettingsScreen(
             val bmp = preview
             if (bmp == null) currentAvatar() else Image(
                 bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(220.dp).clip(RoundedCornerShape(16.dp)).graphicsLayer(rotationZ = rotation.toFloat())
+                modifier = Modifier
+                    .size(220.dp)
+                    .graphicsLayer {
+                        rotationZ = rotation.toFloat()
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = panX * size.width
+                        translationY = panY * size.height
+                    }
+                    .clip(RoundedCornerShape(16.dp))
+                    .pointerInput(uri) {
+                        detectTransformGestures { _, pan, gestureZoom, _ ->
+                            zoom = (zoom * gestureZoom).coerceIn(1f, 5f)
+                            val limit = (zoom - 1f) / 2f
+                            panX = (panX + pan.x / size.width).coerceIn(-limit, limit)
+                            panY = (panY + pan.y / size.height).coerceIn(-limit, limit)
+                        }
+                    }
             )
+            if (bmp != null) {
+                Text("Масштаб: двумя пальцами, перемещение: одним пальцем", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Spacer(Modifier.height(20.dp))
             OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !busy && !processing) { Text("Выбрать фото") }
             if (bmp != null) {
-                OutlinedButton(onClick = { rotation = (rotation + 90) % 360 }, enabled = !busy && !processing) { Text("Повернуть на 90°") }
+                OutlinedButton(onClick = {
+                    rotation = (rotation + 90) % 360
+                    zoom = 1f; panX = 0f; panY = 0f
+                }, enabled = !busy && !processing) { Text("Повернуть на 90°") }
                 Button(onClick = {
                     val selected = uri ?: return@Button
                     processing = true
-                    appBgRun(ctx, selected, rotation) { result ->
+                    appBgRun(ctx, selected, rotation, zoom, panX, panY) { result ->
                         processing = false
                         result.onSuccess(onUpload)
                         result.onFailure { error = it.message ?: "Ошибка обработки фото" }

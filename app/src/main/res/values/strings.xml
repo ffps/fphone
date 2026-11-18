@@ -4,7 +4,7 @@
 
     <!-- Login -->
     <string name="title_login">Вход</string>
-    <string name="hint_server">Адрес сервера (domain.com или https://domain.com)</string>
+    <string name="hint_server">Адрес сервера</string>
     <string name="hint_pin">Отпечаток сертификата (если нужен)</string>
     <string name="hint_login">Логин</string>
     <string name="hint_password">Пароль</string>
