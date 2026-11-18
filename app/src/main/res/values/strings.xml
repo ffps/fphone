@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">fPhone</string>
+    <string name="app_name">Кукуха</string>
 
     <!-- Login -->
     <string name="title_login">Вход</string>
-    <string name="hint_server">Адрес сервера (https://domain.com)</string>
+    <string name="hint_server">Адрес сервера (domain.com или https://domain.com)</string>
     <string name="hint_pin">Отпечаток сертификата (если нужен)</string>
     <string name="hint_login">Логин</string>
     <string name="hint_password">Пароль</string>
     <string name="btn_login">Войти</string>
     <string name="logging_in">Входим…</string>
-    <string name="err_bad_url">Адрес сервера должен начинаться с https://</string>
+    <string name="err_bad_url">Укажите домен или адрес сервера с https://</string>
     <string name="err_invalid_credentials">Неверный логин или пароль</string>
     <string name="err_rate_limited">Слишком много попыток. Подождите немного и повторите.</string>
     <string name="err_network">Не удалось связаться с сервером</string>
@@ -32,7 +32,7 @@
     <string name="perm_audio_needed">Для звонков нужен доступ к микрофону</string>
     <string name="hint_fullscreen">Разрешите полноэкранные уведомления, иначе входящий звонок не появится на заблокированном экране.</string>
     <string name="btn_open_settings">Открыть настройки</string>
-    <string name="hint_battery">Чтобы звонки приходили надёжно, отключите ограничение батареи для fPhone.</string>
+    <string name="hint_battery">Чтобы звонки приходили надёжно, отключите ограничение батареи для Кукуха.</string>
     <string name="btn_battery">Настройки батареи</string>
 
     <!-- Call screen -->
@@ -87,7 +87,7 @@
     <string name="update_error_download">Не удалось скачать обновление</string>
     <string name="update_no_release">Обновлений пока нет</string>
     <string name="update_not_configured">Обновление в этой сборке не настроено</string>
-    <string name="update_allow_install">Разрешите установку приложений для fPhone и нажмите «Обновить» ещё раз</string>
+    <string name="update_allow_install">Разрешите установку приложений для Кукуха и нажмите «Обновить» ещё раз</string>
     <string name="update_busy_call">Нельзя обновлять во время звонка</string>
     <string name="main_call_active">Идёт звонок: %1$s</string>
     <string name="btn_return">Вернуться</string>

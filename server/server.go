@@ -253,6 +253,7 @@ func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request, sess *Sess
 		serverErr(w, err)
 		return
 	}
+	slog.Debug("push token registered", "recipient", sess.User.Login, "device_id", sess.DeviceID, "token_length", len(req.FCMToken))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -267,22 +268,25 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Se
 	// "online" means an open WebSocket. "reachable" also counts users who can be woken up by a push
 	// message (the app is closed or in the background): a call to them is possible.
 	type contact struct {
-		ID        int64  `json:"id"`
-		Name      string `json:"name"`
-		Online    bool   `json:"online"`
-		Reachable bool   `json:"reachable"`
-		Avatar    int64  `json:"avatar"` // version of the photo (file time), 0 = no photo
-		LastSeen  int64  `json:"last_seen"`
+		ID        int64        `json:"id"`
+		Login     string       `json:"login"`
+		Name      string       `json:"name"`
+		Online    bool         `json:"online"`
+		Reachable bool         `json:"reachable"`
+		Avatar    int64        `json:"avatar"`
+		LastSeen  int64        `json:"last_seen"`
+		LastCall  *LastCallRow `json:"last_call,omitempty"`
 	}
 	out := make([]contact, 0, len(users))
 	for _, u := range users {
 		on := online[u.ID]
-		out = append(out, contact{
-			ID: u.ID, Name: u.Name, Online: on,
-			Reachable: on || (canPush && u.HasPush),
-			Avatar:    s.avatarVersionForLogin(u.Login),
-			LastSeen:  u.LastSeen,
-		})
+		lastCall, e := s.store.LastCallBetween(sess.User.ID, u.ID)
+		if e != nil {
+			serverErr(w, e)
+			return
+		}
+		out = append(out, contact{ID: u.ID, Login: u.Login, Name: u.Name, Online: on,
+			Reachable: on || (canPush && u.HasPush), Avatar: s.avatarVersionForLogin(u.Login), LastSeen: u.LastSeen, LastCall: lastCall})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": out})
 }
@@ -346,6 +350,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, sess *Session)
 		return
 	}
 	if err := s.store.SetName(sess.User.ID, name); err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			writeErr(w, http.StatusConflict, "name_taken", "display name is already used by another user")
+			return
+		}
 		serverErr(w, err)
 		return
 	}

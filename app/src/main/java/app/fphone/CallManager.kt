@@ -4,12 +4,14 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.PeerConnection
+import com.google.firebase.messaging.FirebaseMessaging
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -30,7 +32,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         val outgoing: Boolean,
         val peerId: Long,
         var peerName: String,
-        val video: Boolean
+        var video: Boolean,
+        val videoCapable: Boolean = video
     )
 
     interface Listener {
@@ -88,6 +91,11 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private var restarts = 0
     private var audioStarted = false
     private var audioFocus: AudioFocusRequest? = null
+    private var ringback: ToneGenerator? = null
+    private var frontCameraWanted = true
+    private var pushSyncing = false
+    private var refreshingFcm = false
+    private val retryPushRegistration = Runnable { syncPendingPushToken() }
 
     private val reconnect = Runnable {
         if (sig == null && wantConnection()) connect()
@@ -151,8 +159,80 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     }
 
     fun updatePushToken(token: String) {
+        if (token.isBlank()) return
         prefs.fcmToken = token
-        if (prefs.loggedIn) Bg.run({ app.net.putPushToken(token) }) { }
+        if (token == prefs.registeredFcmToken && prefs.pendingFcmToken.isEmpty()) {
+            prefs.lastFcmRefreshAt = System.currentTimeMillis()
+            prefs.pushIssue = false
+            notifyChanged()
+            return
+        }
+        prefs.pendingFcmToken = token
+        prefs.pushIssue = true
+        MessageLog.add(app, "PUSH", "new token stored locally; server registration pending (${token.length} chars)")
+        syncPendingPushToken()
+        notifyChanged()
+    }
+
+    private fun syncPendingPushToken() {
+        val token = prefs.pendingFcmToken
+        if (!prefs.loggedIn || token.isEmpty() || pushSyncing) return
+        pushSyncing = true
+        Bg.run({ app.net.putPushToken(token) }) { result ->
+            pushSyncing = false
+            result.onSuccess {
+                main.removeCallbacks(retryPushRegistration)
+                prefs.registeredFcmToken = token
+                if (prefs.pendingFcmToken == token) prefs.pendingFcmToken = ""
+                prefs.pushIssue = false
+                prefs.lastFcmRefreshAt = System.currentTimeMillis()
+                MessageLog.add(app, "PUSH", "server confirmed FCM token registration")
+            }
+            result.onFailure { e ->
+                prefs.pushIssue = true
+                MessageLog.add(app, "PUSH", "token registration failed; retry scheduled: $e")
+                main.removeCallbacks(retryPushRegistration)
+                main.postDelayed(retryPushRegistration, 15_000L)
+            }
+            notifyChanged()
+        }
+    }
+
+    private fun maybeRefreshFcmToken() {
+        if (!connected || refreshingFcm || System.currentTimeMillis() - prefs.lastFcmRefreshAt < 30L * 24 * 60 * 60 * 1000) return
+        refreshingFcm = true
+        try {
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                refreshingFcm = false
+                val token = if (task.isSuccessful) task.result.orEmpty() else ""
+                if (token.isNotBlank()) updatePushToken(token)
+                else {
+                    prefs.pushIssue = true
+                    MessageLog.add(app, "PUSH", "monthly token refresh failed; keeping previous token: ${task.exception}")
+                    notifyChanged()
+                }
+            }
+        } catch (e: Exception) {
+            refreshingFcm = false
+            prefs.pushIssue = true
+            MessageLog.add(app, "PUSH", "monthly token refresh unavailable; keeping previous token: $e")
+            notifyChanged()
+        }
+    }
+
+    private fun startRingback() {
+        stopRingback()
+        try {
+            ringback = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 70).also {
+                it.startTone(ToneGenerator.TONE_SUP_RINGTONE)
+            }
+            MessageLog.add(app, "CALL", "local ringback tone started")
+        } catch (e: Exception) { MessageLog.add(app, "CALL", "ringback tone unavailable: $e") }
+    }
+
+    private fun stopRingback() {
+        try { ringback?.stopTone(); ringback?.release() } catch (_: Exception) { }
+        ringback = null
     }
 
     // ---------- connection to the server ----------
@@ -226,6 +306,23 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                 }
             }
             "call.accepted" -> onAccepted(m)
+            "call.media" -> {
+                if (m.optString("call") == call?.id) {
+                    call?.video = m.optString("media") == "video"
+                    remoteCameraOn = call?.video == true
+                    notifyChanged()
+                }
+            }
+            "device.log.request" -> {
+                val request = m.optString("request")
+                if (visible > 0) {
+                    MessageLog.add(app, "DIAG", "remote diagnostic log requested")
+                    val journal = MessageLog.text(app).takeLast(32 * 1024)
+                    send(JSONObject().put("t", "device.log.response").put("request", request).put("text", journal))
+                } else {
+                    send(JSONObject().put("t", "device.log.response").put("request", request).put("error", "phone is not in foreground"))
+                }
+            }
             "call.signal" -> onSignal(m)
             "call.ended" -> onEnded(m)
             "ice" -> onIce(m)
@@ -236,6 +333,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private fun onAuthOk(m: JSONObject) {
         connected = true
         reconnectDelay = 1000L
+        syncPendingPushToken()
+        maybeRefreshFcmToken()
         val ids = HashSet<Long>()
         val arr = m.optJSONArray("online")
         if (arr != null) for (i in 0 until arr.length()) ids.add(arr.getLong(i))
@@ -271,7 +370,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             send(invite)
         }
         val currentCall = call
-        if (currentCall != null && currentCall.id.isNotEmpty() && currentCall.video &&
+        if (currentCall != null && currentCall.id.isNotEmpty() && currentCall.videoCapable &&
             (state == State.CONNECTING || state == State.ACTIVE)) {
             send(JSONObject().put("t", "call.signal").put("call", currentCall.id).put("kind", "camera").put("enabled", cameraOn))
         }
@@ -302,7 +401,10 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         ringing = false
         lastEndReason = null
         cameraWanted = video
+        cameraOn = video
+        frontCameraWanted = true
         remoteCameraOn = video
+        startRingback()
         val invite = JSONObject()
             .put("t", "call.invite")
             .put("to", peerId)
@@ -321,6 +423,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         val c = call ?: return
         if (state != State.INCOMING || c.outgoing) return
         cameraWanted = withCamera
+        cameraOn = withCamera
+        c.video = c.video && withCamera
         Notifications.cancelIncoming(app)
         main.removeCallbacks(expire)
         state = State.CONNECTING
@@ -335,6 +439,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         pending = Pending.NONE
         startEngine()
         send(JSONObject().put("t", "call.accept").put("call", c.id))
+        if (c.videoCapable && !cameraWanted) send(JSONObject().put("t", "call.signal").put("call", c.id).put("kind", "camera").put("enabled", false))
     }
 
     fun reject() {
@@ -373,14 +478,43 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     fun toggleCamera() {
         cameraOn = !cameraOn
-        engine?.setVideoEnabled(cameraOn)
         val c = call
+        if (state == State.OUTGOING) {
+            cameraWanted = cameraOn
+            if (c != null) c.video = cameraOn
+        }
+        val e = engine
+        if (cameraOn && e != null && !e.hasLocalVideo) {
+            ensureLocalVideoTrack()
+        } else {
+            e?.setVideoEnabled(cameraOn)
+        }
         if (c != null && c.id.isNotEmpty()) send(JSONObject().put("t", "call.signal").put("call", c.id).put("kind", "camera").put("enabled", cameraOn))
         notifyChanged()
     }
 
+    private fun ensureLocalVideoTrack() {
+        val e = engine ?: return
+        val c = call ?: return
+        if (!cameraOn || !c.videoCapable || e.hasLocalVideo || state != State.ACTIVE) return
+        if (e.enableVideo(frontCameraWanted)) {
+            e.createOffer(false) { sdp -> sendSignal("offer", sdp, false) }
+        } else {
+            cameraOn = false
+            MessageLog.add(app, "CALL", "camera could not be enabled")
+            notifyChanged()
+        }
+    }
+
+    fun toggleIncomingCamera() {
+        if (state != State.INCOMING) return
+        cameraOn = !cameraOn
+        notifyChanged()
+    }
+
     fun switchCamera() {
-        engine?.switchCamera()
+        val e = engine
+        if (e == null || !e.hasLocalVideo) frontCameraWanted = !frontCameraWanted else e.switchCamera()
         notifyChanged()
     }
 
@@ -396,7 +530,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         if (!prefs.loggedIn || state != State.IDLE) return
         val remaining = if (expSeconds > 0) expSeconds * 1000L - System.currentTimeMillis() else 45_000L
         if (remaining <= 0) {
-            MessageLog.add(app, "push for call $callId arrived too late, ignored")
+            MessageLog.add(app, "PUSH", "push for call $callId arrived too late, ignored")
             return
         }
         val name = when {
@@ -407,7 +541,10 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         remoteCameraOn = video
         call = c
         state = State.INCOMING
+        cameraOn = video
+        cameraWanted = video
         lastEndReason = null
+        MessageLog.add(app, "PUSH", "incoming call received id=$callId from=$fromId")
         Notifications.showIncoming(app, name, video, remaining)
         main.removeCallbacks(expire)
         main.postDelayed(expire, remaining)
@@ -431,7 +568,9 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             return
         }
         c.id = id
+        c.video = cameraOn
         ice = m.optJSONObject("ice")
+        if (!cameraOn) send(JSONObject().put("t", "call.signal").put("call", id).put("kind", "camera").put("enabled", false))
         notifyChanged()
     }
 
@@ -454,9 +593,12 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         if (c == null) {
             c = CallInfo(id, false, peer.getLong("id"), peer.optString("name"), info.optString("media") == "video")
             remoteCameraOn = c.video
+            cameraOn = c.video
+            cameraWanted = c.video
             call = c
             state = State.INCOMING
             lastEndReason = null
+            MessageLog.add(app, "CALL", "incoming call screen started id=$id")
             Notifications.showIncoming(app, c.peerName, c.video, 50_000L)
             if (visible > 0) app.startActivity(CallActivity.intent(app))
         }
@@ -471,6 +613,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         val c = call ?: return
         if (m.optString("call") != c.id) return
         if (c.outgoing && engine == null) {
+            stopRingback()
+            c.video = cameraWanted && cameraOn
             state = State.CONNECTING
             startEngine()
             engine?.createOffer(false) { sdp -> sendSignal("offer", sdp, false) }
@@ -542,7 +686,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         engine = e
         try {
             val config = ice ?: JSONObject().put("servers", JSONArray()).put("policy", "all")
-            e.start(config, c.video && cameraWanted)
+            e.start(config, c.videoCapable && cameraWanted && cameraOn, frontCameraWanted)
+            e.setVideoEnabled(c.videoCapable && cameraWanted && cameraOn)
         } catch (t: Throwable) {
             MessageLog.add(app, "cannot start WebRTC: $t")
             if (c.id.isNotEmpty()) send(JSONObject().put("t", "call.hangup").put("call", c.id))
@@ -575,6 +720,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                     send(JSONObject().put("t", "call.connected").put("call", c.id))
                     engine?.limitBitrate()
                     engine?.logSelectedPair { MessageLog.add(app, it) }
+                    ensureLocalVideoTrack()
                     notifyChanged()
                 }
             }
@@ -676,7 +822,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         app.history.add(
             HistoryEntry(System.currentTimeMillis(), c.peerId, c.peerName, c.outgoing, c.video, result, talk)
         )
-        if (result == "missed") Notifications.showMissed(app, c.peerName)
+        if (result == "missed") Notifications.showMissed(app, c.peerId, c.peerName)
     }
 
     private fun endLocal(reason: String) {
@@ -686,6 +832,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         lastEndReason = reason
         lastPeerName = c?.peerName ?: ""
         main.removeCallbacks(expire)
+        stopRingback()
         Notifications.cancelIncoming(app)
         engine?.close()
         engine = null
@@ -701,6 +848,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         restarts = 0
         muted = false
         cameraOn = true
+        cameraWanted = true
+        frontCameraWanted = true
         remoteCameraOn = true
         speaker = false
         notifyChanged()

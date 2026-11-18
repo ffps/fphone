@@ -98,7 +98,7 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
 
     // ---------- setup ----------
 
-    fun start(ice: JSONObject, withVideo: Boolean) {
+    fun start(ice: JSONObject, withVideo: Boolean, frontCamera: Boolean = true) {
         ensureInit(ctx)
         val audioModule = JavaAudioDeviceModule.builder(ctx.applicationContext).createAudioDeviceModule()
         adm = audioModule
@@ -122,14 +122,15 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
         audioTrack = track
         p.addTrack(track, listOf("stream0"))
 
-        if (withVideo) startCamera(f, p)
+        if (withVideo) startCamera(f, p, frontCamera)
     }
 
-    private fun startCamera(f: PeerConnectionFactory, p: PeerConnection) {
+    private fun startCamera(f: PeerConnectionFactory, p: PeerConnection, frontCamera: Boolean) {
         val enumerator: CameraEnumerator =
             if (Camera2Enumerator.isSupported(ctx)) Camera2Enumerator(ctx) else Camera1Enumerator(true)
         val names = enumerator.deviceNames
-        val name = names.firstOrNull { enumerator.isFrontFacing(it) } ?: names.firstOrNull()
+        val preferred = names.firstOrNull { enumerator.isFrontFacing(it) == frontCamera }
+        val name = preferred ?: names.firstOrNull()
         if (name == null) {
             events.onError("no camera found")
             return
@@ -263,6 +264,18 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
 
     fun setVideoEnabled(on: Boolean) {
         videoTrack?.setEnabled(on)
+    }
+
+    /** Adds a video sender after an audio-only answer, then the caller renegotiates the session. */
+    fun enableVideo(frontCamera: Boolean): Boolean {
+        val existing = videoTrack
+        if (existing != null) { existing.setEnabled(true); return true }
+        val f = factory ?: return false
+        val p = pc ?: return false
+        startCamera(f, p, frontCamera)
+        val track = videoTrack ?: return false
+        track.setEnabled(true)
+        return true
     }
 
     fun switchCamera() {

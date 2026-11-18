@@ -15,6 +15,7 @@ import (
 
 type Config struct {
 	Listen         string      `yaml:"listen"`
+	ControlPort    int         `yaml:"control_port"`
 	DataDir        string      `yaml:"data_dir"`
 	PublicHost     string      `yaml:"public_host"`
 	AllowedOrigins []string    `yaml:"allowed_origins"`
@@ -70,12 +71,14 @@ type FCMConfig struct {
 
 func defaultConfig() *Config {
 	return &Config{
-		Listen:  ":8099",
-		DataDir: "data",
-		TLS:     TLSConfig{Mode: "off"},
-		Log:     LogConfig{MaxSizeMB: 5, Keep: 3, Level: "info"},
-		Auth:    AuthConfig{TokenTTLDays: 90},
+		Listen:      ":8099",
+		ControlPort: 8098,
+		DataDir:     "data",
+		TLS:         TLSConfig{Mode: "off"},
+		Log:         LogConfig{MaxSizeMB: 5, Keep: 3, Level: "debug"},
+		Auth:        AuthConfig{TokenTTLDays: 90},
 		Turn: TurnConfig{
+			Enabled:               true,
 			ListenPort:            3478,
 			RelayIPRefreshSeconds: 60,
 			RelayPortMin:          49160,
@@ -83,7 +86,7 @@ func defaultConfig() *Config {
 			ICEPolicy:             "relay",
 			CredentialTTLMinutes:  120,
 		},
-		Calls: CallsConfig{RingTimeoutSeconds: 45, ReconnectGraceSeconds: 30, MaxActive: 4},
+		Calls: CallsConfig{RingTimeoutSeconds: 60, ReconnectGraceSeconds: 30, MaxActive: 5},
 		FCM:   FCMConfig{SendCallerName: true},
 	}
 }
@@ -127,6 +130,9 @@ func resolvePath(base, p string) string {
 func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return errors.New("data_dir must not be empty")
+	}
+	if c.ControlPort < 1 || c.ControlPort > 65535 {
+		return errors.New("control_port must be between 1 and 65535")
 	}
 	switch c.TLS.Mode {
 	case "off", "self-signed":

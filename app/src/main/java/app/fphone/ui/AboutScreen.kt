@@ -5,6 +5,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -20,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +46,7 @@ import app.fphone.app
 fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = ctx.app.prefs
+    LaunchedEffect(Unit) { prefs.pushIssue = false }
     var showLog by remember { mutableStateOf(false) }
     var logText by remember { mutableStateOf(MessageLog.text(ctx)) }
     Scaffold(topBar = {
@@ -55,6 +60,10 @@ fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
         )
     }) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(56.dp))
+                Text("Кукуха", modifier = Modifier.padding(start = 16.dp), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
+            }
             SectionTitle("Версия")
             UpdateSection(onUpdate)
             SectionTitle("Журнал")
@@ -65,7 +74,7 @@ fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
             )
             SectionTitle("Проект")
             ListItem(
-                headlineContent = { Text("GitHub") },
+                headlineContent = { Text("Исходный код проекта на GitHub") },
                 supportingContent = { Text(BuildConfig.UPDATE_REPO.ifBlank { "Репозиторий не указан в сборке" }) },
                 trailingContent = {
                     if (BuildConfig.UPDATE_REPO.isNotBlank()) OutlinedButton(onClick = {
@@ -92,7 +101,7 @@ fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
                 Column {
                     TextButton(onClick = {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("fPhone log", logText + "\n\nFCM token:\n" + prefs.fcmToken))
+                        cm.setPrimaryClip(ClipData.newPlainText("Кукуха log", logText + "\n\nFCM token:\n" + prefs.fcmToken))
                     }) { Text("Скопировать всё") }
                     TextButton(onClick = {
                         MessageLog.clear(ctx)

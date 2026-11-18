@@ -66,6 +66,7 @@ fun MainScreen(
     val ctx = LocalContext.current
     val app = rememberApp()
     val calls = app.calls
+    val prefs = app.prefs
     var tab by rememberSaveable(startTab) { mutableIntStateOf(startTab) }
     var settings by rememberSaveable { mutableStateOf(false) }
     var about by rememberSaveable { mutableStateOf(false) }
@@ -104,7 +105,7 @@ fun MainScreen(
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(30.dp))
+                                Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(30.dp))
                             }
                             Text(stringResource(if (tab == 0) R.string.tab_contacts else R.string.tab_recents))
                         }
@@ -124,9 +125,14 @@ fun MainScreen(
                             )
                             DropdownMenuItem(
                                 text = { Text("О приложении") },
-                                leadingIcon = { Icon(painterResource(R.drawable.ic_info), contentDescription = null) },
+                                leadingIcon = {
+                                    androidx.compose.material3.BadgedBox(badge = {
+                                        if (prefs.pushIssue) Badge(containerColor = androidx.compose.ui.graphics.Color.Red)
+                                    }) { Icon(painterResource(R.drawable.ic_info), contentDescription = null) }
+                                },
                                 onClick = {
                                     menuOpen = false
+                                    prefs.pushIssue = false
                                     about = true
                                 }
                             )
@@ -168,7 +174,16 @@ fun MainScreen(
             Column(Modifier.padding(padding)) {
                 // A call is going on: return to it or end it.
                 val active = calls.call
-                if (active != null && calls.state != CallManager.State.IDLE) {
+                var showCallBanner by remember { mutableStateOf(false) }
+                LaunchedEffect(active?.id) {
+                    showCallBanner = false
+                    val id = active?.id
+                    if (id != null) {
+                        delay(1000)
+                        showCallBanner = calls.call?.id == id && calls.state != CallManager.State.IDLE
+                    }
+                }
+                if (active != null && calls.state != CallManager.State.IDLE && showCallBanner) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                         modifier = Modifier.fillMaxWidth().padding(12.dp)

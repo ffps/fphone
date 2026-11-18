@@ -29,11 +29,15 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
     }
 
     // Registered before onCreate; must not be called after STARTED.
+    private val cameraLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) app.calls.toggleCamera()
+    }
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val audioGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
-        val cameraGranted = permissions[Manifest.permission.CAMERA] == true
+        val audioGranted = granted(Manifest.permission.RECORD_AUDIO) || permissions[Manifest.permission.RECORD_AUDIO] == true
+        val cameraGranted = granted(Manifest.permission.CAMERA) || permissions[Manifest.permission.CAMERA] == true
 
         val c = app.calls.call ?: return@registerForActivityResult
         if (!audioGranted) {
@@ -41,7 +45,7 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
             app.calls.reject()
         } else {
             // Without the camera permission the video call is answered with sound only.
-            app.calls.accept(c.video && cameraGranted)
+            app.calls.accept(c.video && app.calls.cameraOn && cameraGranted)
         }
     }
 
@@ -63,7 +67,7 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
         enableEdgeToEdge()
         setContent {
             FPhoneTheme(app.prefs.dynamicColor) {
-                CallScreen(onAccept = { acceptClicked() }, onFinish = { finish() })
+                CallScreen(onAccept = { acceptClicked() }, onToggleCamera = { toggleCameraClicked() }, onFinish = { finish() })
             }
         }
         handleIntent(intent)
@@ -84,6 +88,7 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
 
     override fun onStart() {
         super.onStart()
+        MessageLog.add(this, "CALL", "call screen activity started id=${app.calls.call?.id}")
         app.calls.addListener(this)
         app.calls.onActivityStarted()
         app.uiTick.intValue++
@@ -104,13 +109,22 @@ class CallActivity : ComponentActivity(), CallManager.Listener {
     private fun granted(p: String): Boolean =
         checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
 
+    private fun toggleCameraClicked() {
+        if (!app.calls.cameraOn && !granted(Manifest.permission.CAMERA)) {
+            cameraLauncher.launch(Manifest.permission.CAMERA)
+        } else {
+            app.calls.toggleCamera()
+        }
+    }
+
     private fun acceptClicked() {
         val c = app.calls.call ?: return
         val need = ArrayList<String>()
         if (!granted(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO)
-        if (c.video && !granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA)
+        val wantsCamera = c.video && app.calls.cameraOn
+        if (wantsCamera && !granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA)
         if (need.isEmpty()) {
-            app.calls.accept(c.video)
+            app.calls.accept(wantsCamera)
         } else {
             permissionLauncher.launch(need.toTypedArray())
         }

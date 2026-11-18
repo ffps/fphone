@@ -1,4 +1,4 @@
-# fPhone (Android client)
+# Кукуха (Android client)
 
 Family video calls over your own server (see the fPhone server). Native WebRTC, all call media
 goes through the TURN relay of the server, so it works between phones behind mobile NAT.
@@ -46,9 +46,9 @@ A release is made by either:
 
 - pushing a tag `vX.Y.Z`, or
 - pushing a commit to `main` whose message contains `[release vX.Y.Z]`, for example
-  `Native WebRTC client [release v0.2.0]`.
+  `Native WebRTC client [release v0.3.0]`.
 
-The workflow builds a signed APK named `fPhone-X.Y.Z.apk` and attaches it to a GitHub release
+The workflow builds a signed APK named `Kukukha-X.Y.Z.apk` and attaches it to a GitHub release
 `vX.Y.Z`. Other pushes to `main` only check that the app builds and keep a debug APK as a
 workflow artifact for 7 days.
 
@@ -90,6 +90,18 @@ and run:
 gradle assembleDebug -PfphoneAppId=<package_name from google-services.json>
 ```
 
+## Server CLI additions in 0.3.0
+
+- `fphone push-test id=ID` sends a test push to one registered device; `login=LOGIN` targets all
+  devices of a user. Optional `title=...` and `text=...` override the defaults.
+- `fphone user name LOGIN` prints the current display name; `fphone user name LOGIN NAME` changes it.
+- `fphone device log ID` requests the diagnostic journal over the phone's existing WebSocket and
+  saves it as `data_dir/ID.log`. The phone must be connected with the app in the foreground.
+
+The server's CLI control listener is bound only to `127.0.0.1` (default port 8098); it is not
+exposed to the network. Change `control_port` in the server configuration if that local port is
+already in use.
+
 ## How it works
 
 * `CallManager` is the brain: it keeps the WebSocket connection to the server only while the app
@@ -104,14 +116,14 @@ gradle assembleDebug -PfphoneAppId=<package_name from google-services.json>
 
 ## Icon
 
-`art/fphone.svg` is the source. The launcher icons were rendered from it: PNG files for old
-Android versions and a vector adaptive icon for Android 8 and newer.
+The Android launcher icon uses the supplied Кукуха icon set: adaptive foreground/background
+resources plus density-specific PNGs for older Android versions.
 
 ## Updates
 
 The main screen shows the installed version and the button **Check for updates** (it also
 checks once when the app starts). When a newer release exists, the button **Update** appears: it
-downloads `fPhone-X.Y.Z.apk` from the GitHub release and starts the system installer.
+downloads `Kukukha-X.Y.Z.apk` from the GitHub release and starts the system installer.
 
 * The repository is taken from the build (`github.repository` of the workflow), nothing is
   stored in the source. The repository must be public.

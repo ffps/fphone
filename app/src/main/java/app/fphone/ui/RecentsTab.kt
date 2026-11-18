@@ -97,7 +97,6 @@ fun RecentsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mod
 
 @Composable
 private fun subtitle(e: HistoryEntry): String {
-    val arrow = if (e.outgoing) "\u2197" else "\u2199"
     val what = stringResource(
         when (e.result) {
             "answered" -> if (e.outgoing) R.string.h_outgoing else R.string.h_incoming
@@ -120,5 +119,5 @@ private fun subtitle(e: HistoryEntry): String {
         else -> SimpleDateFormat("dd.MM, HH:mm", Locale.getDefault()).format(Date(e.ts))
     }
     val duration = if (e.result == "answered" && e.durationSec > 0) " \u00B7 %d:%02d".format(e.durationSec / 60, e.durationSec % 60) else ""
-    return "$arrow $what \u00B7 $time$duration"
+    return "$what \u00B7 $time$duration"
 }

@@ -163,7 +163,7 @@ fun UpdateSection(onUpdate: () -> Unit) {
         )
     }
     val busy = u.kind == Updater.Kind.CHECKING || u.kind == Updater.Kind.DOWNLOADING
-    Column(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         Text(stringResource(R.string.update_version, u.installedVersion), style = MaterialTheme.typography.bodyLarge)
         if (status.isNotEmpty()) {
             Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

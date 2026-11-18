@@ -197,19 +197,19 @@ func (m *Calls) sendPushes(callID, login string, targets map[int64]string, data 
 	ok := 0
 	for deviceID, token := range targets {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		err := m.push.Send(ctx, token, data, "call-"+callID, ttl)
+		messageID, err := m.push.SendWithResult(ctx, token, data, "call-"+callID, ttl)
 		cancel()
-		switch {
-		case err == nil:
+		if err == nil {
 			ok++
-		case errors.Is(err, ErrTokenInvalid):
-			slog.Warn("push: token is not registered any more, removing it", "user", login, "device_id", deviceID)
+			slog.Debug("push delivery accepted by FCM", "call", callID, "recipient", login, "device_id", deviceID, "message_id", messageID, "message_type", data["type"], "priority", "HIGH", "result", "accepted")
+		} else if errors.Is(err, ErrTokenInvalid) {
+			slog.Warn("push token is not registered, removing it", "call", callID, "recipient", login, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "UNREGISTERED", "error", err)
 			m.store.ClearFCM(deviceID, token)
-		default:
-			slog.Error("push failed", "user", login, "device_id", deviceID, "err", err)
+		} else {
+			slog.Error("push delivery failed", "call", callID, "recipient", login, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "error", "err", err)
 		}
 	}
-	slog.Info("push sent", "call", callID, "user", login, "ok", ok, "devices", len(targets))
+	slog.Debug("push batch finished", "call", callID, "recipient", login, "ok", ok, "devices", len(targets), "message_type", data["type"], "priority", "HIGH")
 	if ok == 0 {
 		m.onPushFailed(callID)
 	}
@@ -249,12 +249,17 @@ func (m *Calls) cancelPushes(call *Call, exceptDevice int64) {
 	id := call.ID
 	data := map[string]string{"type": "call.cancelled", "call": id}
 	go func() {
-		for _, tok := range targets {
+		for deviceID, tok := range targets {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			err := m.push.Send(ctx, tok, data, "call-"+id, time.Minute)
+			messageID, err := m.push.SendWithResult(ctx, tok, data, "call-"+id, time.Minute)
 			cancel()
-			if err != nil && !errors.Is(err, ErrTokenInvalid) {
-				slog.Warn("push: cancel message failed", "call", id, "err", err)
+			if err == nil {
+				slog.Debug("push delivery accepted by FCM", "call", id, "recipient", call.CalleeLogin, "device_id", deviceID, "message_id", messageID, "message_type", data["type"], "priority", "HIGH", "result", "accepted")
+			} else if errors.Is(err, ErrTokenInvalid) {
+				slog.Warn("push token is not registered", "call", id, "recipient", call.CalleeLogin, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "UNREGISTERED", "error", err)
+				m.store.ClearFCM(deviceID, tok)
+			} else {
+				slog.Warn("push cancel message failed", "call", id, "recipient", call.CalleeLogin, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "error", "err", err)
 			}
 		}
 	}()
@@ -482,6 +487,15 @@ func (m *Calls) signal(c *Client, callID, kind, sdp string, cand json.RawMessage
 		c.sendErr("forbidden", ref)
 		return
 	}
+	if kind == "camera" && (call.State == stCalling || call.State == stRinging) && c.sess.User.ID == call.CallerID && c.sess.DeviceID == call.CallerDevice {
+		if enabled {
+			call.Media = "video"
+		} else {
+			call.Media = "audio"
+		}
+		m.hub.SendToUser(call.CalleeID, map[string]any{"t": "call.media", "call": call.ID, "media": call.Media})
+		return
+	}
 	if (call.State != stAccepted && call.State != stActive) || target == 0 {
 		c.sendErr("bad_state", ref)
 		return
@@ -539,6 +553,9 @@ func (m *Calls) endLocked(call *Call, reason string) {
 	var talk time.Duration
 	if !call.ConnectedAt.IsZero() {
 		talk = now.Sub(call.ConnectedAt)
+	}
+	if err := m.store.RecordCall(*call, reason, now, int(ring.Seconds()), int(talk.Seconds())); err != nil {
+		slog.Error("cannot write call history", "call", call.ID, "err", err)
 	}
 	slog.Info("call", "id", call.ID, "from", call.CallerLogin, "to", call.CalleeLogin,
 		"media", call.Media, "reason", reason, "ring_s", int(ring.Seconds()), "talk_s", int(talk.Seconds()))

@@ -16,3 +16,15 @@
 
 
 The WebSocket `call.signal` message also forwards `kind: "camera"` with an `enabled` boolean so the peer can replace a disabled remote video with the caller's avatar.
+
+
+## CLI commands added in 0.3.0
+
+- `fphone push-test id=ID` sends a test push to a registered device; `login=LOGIN` targets all
+  devices belonging to a user. `title=...` and `text=...` are optional overrides.
+- `fphone user name LOGIN` prints the display name; `fphone user name LOGIN NAME` updates it.
+- `fphone device log ID` asks an online foreground phone for its diagnostic journal over its
+  existing WebSocket and writes `data_dir/ID.log`.
+
+The CLI log request uses a small local-only control endpoint bound to `127.0.0.1`; its port is
+configured by `control_port` (default 8098) and its access token is stored in `data_dir/control.token`. Set `log.level: debug` to include detailed push delivery diagnostics.

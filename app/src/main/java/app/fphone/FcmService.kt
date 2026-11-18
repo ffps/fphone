@@ -14,11 +14,11 @@ class FcmService : FirebaseMessagingService() {
 
     override fun onCreate() {
         super.onCreate()
-        MessageLog.add(this, "push service started")
+        MessageLog.add(this, "PUSH", "Firebase messaging service started")
     }
 
     override fun onNewToken(token: String) {
-        MessageLog.add(this, "new push token (${token.length} chars)")
+        MessageLog.add(this, "PUSH", "Firebase issued a new token (${token.length} chars)")
         val calls = applicationContext.app.calls
         Handler(Looper.getMainLooper()).post { calls.updatePushToken(token) }
     }
@@ -27,7 +27,7 @@ class FcmService : FirebaseMessagingService() {
         val d = msg.data
         // priority = what Android delivered, originalPriority = what the server asked for
         // (1 = high, 2 = normal). priority 2 for a call message means the phone delayed it.
-        MessageLog.add(this, "push: type=${d["type"]} priority=${msg.priority} original=${msg.originalPriority}")
+        MessageLog.add(this, "PUSH", "push received: type=${d["type"]} priority=${msg.priority} original=${msg.originalPriority} call=${d["call"]}")
 
         val calls = applicationContext.app.calls
         val main = Handler(Looper.getMainLooper())
@@ -44,7 +44,7 @@ class FcmService : FirebaseMessagingService() {
                 val id = d["call"] ?: return
                 main.post { calls.onPushCancelled(id) }
             }
-            "test" -> Notifications.showTest(this, d["text"] ?: "")
+            "test" -> Notifications.showTest(this, d["title"] ?: getString(R.string.notif_test_title), d["text"] ?: "")
         }
     }
 

@@ -4,6 +4,7 @@ package app.fphone.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
@@ -24,15 +25,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Button
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import app.fphone.CallManager
 import app.fphone.Contact
+import app.fphone.ContactLastCall
 import app.fphone.R
 
 /** The saved order first, new contacts (alphabetical, as the server sends them) at the end. */
@@ -77,6 +85,13 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     var pullDistance by remember { mutableFloatStateOf(0f) }
+    var refreshing by remember { mutableStateOf(false) }
+    var selectedContact by remember { mutableStateOf<Contact?>(null) }
+    fun refreshContacts() {
+        refreshing = true
+        calls.loadContacts()
+        scope.launch { kotlinx.coroutines.delay(800); refreshing = false }
+    }
     val refreshConnection = remember(listState, density) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
@@ -86,7 +101,7 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                 return androidx.compose.ui.geometry.Offset.Zero
             }
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                if (pullDistance > with(density) { 72.dp.toPx() }) scope.launch { calls.loadContacts() }
+                if (pullDistance > with(density) { 72.dp.toPx() }) refreshContacts()
                 pullDistance = 0f
                 return Velocity.Zero
             }
@@ -104,20 +119,24 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                         change.consume()
                     },
                     onDragEnd = {
-                        if (emptyPull > threshold) calls.loadContacts()
+                        if (emptyPull > threshold) refreshContacts()
                         emptyPull = 0f
                     },
                     onDragCancel = { emptyPull = 0f }
                 )
-            }
-        )
+            },
+            contentAlignment = Alignment.TopCenter
+        ) {
+            if (refreshing) Icon(painterResource(R.drawable.ic_refresh), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp).size(24.dp))
+        }
     } else {
         val finishDrag: () -> Unit = {
             dragging = null
             dragOffset = 0f
             app.prefs.contactOrder = ids.toList()
         }
-        LazyColumn(state = listState, modifier = modifier.fillMaxSize().nestedScroll(refreshConnection)) {
+        Box(modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().nestedScroll(refreshConnection)) {
             items(ids, key = { it }) { id ->
                 val c = byId[id]
                 if (c != null) {
@@ -135,6 +154,7 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                         canCall = canCall,
                         dragged = isDragged,
                         onCall = onCall,
+                        onDetails = { selectedContact = c },
                         modifier = itemModifier.pointerInput(id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = {
@@ -170,6 +190,12 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                 }
             }
         }
+        if (refreshing) Icon(painterResource(R.drawable.ic_refresh), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp).size(24.dp))
+        }
+    }
+    selectedContact?.let { c ->
+        ContactDetailsDialog(c, online = c.online || c.id in calls.online, canCall = calls.state == CallManager.State.IDLE && (c.reachable || c.id in calls.online),
+            onDismiss = { selectedContact = null }, onCall = { selectedContact = null; onCall(c.id,c.name,true) })
     }
 }
 
@@ -180,11 +206,12 @@ private fun ContactRow(
     canCall: Boolean,
     dragged: Boolean,
     onCall: (Long, String, Boolean) -> Unit,
+    onDetails: () -> Unit,
     modifier: Modifier
 ) {
     val background = if (dragged) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
     Row(
-        modifier.fillMaxWidth().background(background).padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier.fillMaxWidth().background(background).clickable(onClick = onDetails).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Avatar(c.id, c.name, c.avatar, 52.dp, online)
@@ -199,6 +226,62 @@ private fun ContactRow(
             Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.cd_call), tint = tint)
         }
     }
+}
+
+
+@Composable
+private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, onDismiss: () -> Unit, onCall: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp) {
+            Column(Modifier.widthIn(min = 280.dp, max = 360.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Avatar(c.id, c.name, c.avatar, 104.dp, online)
+                Spacer(Modifier.height(12.dp))
+                Text(c.name, style = MaterialTheme.typography.headlineSmall)
+                Text("@${c.login}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Text(if (online) "Сейчас в сети" else lastSeenText(c.lastSeen), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val last = c.lastCall
+                if (last != null) {
+                    Spacer(Modifier.height(18.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        val missed = last.result == "missed"
+                        val icon = when { missed -> R.drawable.ic_call_missed; last.outgoing -> R.drawable.ic_call_made; else -> R.drawable.ic_call_received }
+                        val tint = when { missed -> Color(0xFFD32F2F); last.outgoing -> Color(0xFF2E7D32); else -> Color(0xFF1976D2) }
+                        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(lastCallLabel(last), style = MaterialTheme.typography.bodyMedium)
+                            Text(formatLastCallTime(last.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                Button(onClick = onCall, enabled = canCall, modifier = Modifier.fillMaxWidth()) {
+                    Icon(painterResource(R.drawable.ic_call), contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Вызов")
+                }
+            }
+        }
+    }
+}
+
+private fun lastCallLabel(c: ContactLastCall): String = when (c.result) {
+    "missed" -> "Пропущенный"
+    "declined", "rejected" -> "Отклонённый"
+    "cancelled" -> "Отменён"
+    "elsewhere" -> "Ответили на другом устройстве"
+    "busy" -> "Занято"
+    "no_answer" -> if (c.outgoing) "Нет ответа" else "Пропущенный"
+    "offline" -> "Недоступен"
+    "answered", "hangup" -> if (c.outgoing) "Исходящий" else "Входящий"
+    else -> if (c.outgoing) "Исходящий" else "Входящий"
+}
+
+private fun formatLastCallTime(ts: Long): String {
+    if (ts <= 0L) return ""
+    val date = Date(ts * 1000L)
+    return SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()).format(date)
 }
 
 

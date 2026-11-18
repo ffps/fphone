@@ -46,47 +46,68 @@ object Notifications {
         nm.createNotificationChannel(misc)
     }
 
-    /** Aggregated notification about missed incoming calls. */
-    fun showMissed(ctx: Context, name: String) {
+    /** One notification with per-caller missed-call counts. */
+    fun showMissed(ctx: Context, peerId: Long, name: String) {
         ensureChannels(ctx)
         val prefs = ctx.getSharedPreferences("fphone_notifications", Context.MODE_PRIVATE)
-        val count = prefs.getInt("missed_count", 0) + 1
-        prefs.edit().putInt("missed_count", count).putString("missed_last_name", name).apply()
-        val open = PendingIntent.getActivity(
-            ctx, 7, Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, 1), immutable()
-        )
-        val title = if (count == 1) ctx.getString(R.string.notif_missed_title)
-            else "Пропущенные звонки: $count"
+        val raw = prefs.getString("missed_by_peer", "{}") ?: "{}"
+        val counts = try { org.json.JSONObject(raw) } catch (_: Exception) { org.json.JSONObject() }
+        val key = peerId.toString()
+        counts.put(key, counts.optInt(key, 0) + 1)
+        prefs.edit().putString("missed_by_peer", counts.toString()).apply()
+        val total: Int
+        val callerIds = ArrayList<String>()
+        var sum = 0
+        val countKeys = counts.keys()
+        while (countKeys.hasNext()) {
+            val id = countKeys.next()
+            callerIds.add(id)
+            sum += counts.optInt(id, 0)
+        }
+        total = sum
+        val parts = ArrayList<String>()
+        val names = prefs.getString("missed_names", "{}") ?: "{}"
+        val nameMap = try { org.json.JSONObject(names) } catch (_: Exception) { org.json.JSONObject() }
+        nameMap.put(key, name)
+        prefs.edit().putString("missed_names", nameMap.toString()).apply()
+        for (id in callerIds) {
+            val n = nameMap.optString(id, "Контакт")
+            parts.add("$n (${counts.optInt(id)})")
+        }
+        val open = PendingIntent.getActivity(ctx, 7, Intent(ctx, MainActivity::class.java).putExtra(MainActivity.EXTRA_TAB, 1), immutable())
         val n = NotificationCompat.Builder(ctx, CH_MISC)
             .setSmallIcon(R.drawable.ic_stat_call)
-            .setContentTitle(title)
-            .setContentText(name)
-            .setNumber(count)
+            .setContentTitle("Пропущенные звонки: $total")
+            .setContentText(parts.joinToString(", "))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(parts.joinToString("\n")))
+            .setNumber(total)
             .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
             .setAutoCancel(true)
             .setContentIntent(open)
             .build()
         ctx.getSystemService(NotificationManager::class.java).notify(2000, n)
+        MessageLog.add(ctx, "PUSH", "missed-call notification displayed; count=$total")
     }
 
     fun clearMissed(ctx: Context) {
         ctx.getSharedPreferences("fphone_notifications", Context.MODE_PRIVATE).edit()
-            .remove("missed_count").remove("missed_last_name").apply()
+            .remove("missed_by_peer").remove("missed_names").remove("missed_count").remove("missed_last_name").apply()
         ctx.getSystemService(NotificationManager::class.java).cancel(2000)
     }
 
     /** Simple notification for the test message of "fphone push-test" on the server. */
-    fun showTest(ctx: Context, text: String) {
+    fun showTest(ctx: Context, title: String, text: String) {
         ensureChannels(ctx)
         val open = PendingIntent.getActivity(ctx, 6, Intent(ctx, MainActivity::class.java), immutable())
         val n = NotificationCompat.Builder(ctx, CH_MISC)
             .setSmallIcon(R.drawable.ic_stat_call)
-            .setContentTitle(ctx.getString(R.string.notif_test_title))
+            .setContentTitle(title)
             .setContentText(text)
             .setAutoCancel(true)
             .setContentIntent(open)
             .build()
         ctx.getSystemService(NotificationManager::class.java).notify(ID_TEST, n)
+        MessageLog.add(ctx, "PUSH", "test notification displayed")
     }
 
     private fun immutable(): Int = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -118,6 +139,7 @@ object Notifications {
         val n = b.build()
         n.flags = n.flags or Notification.FLAG_INSISTENT // repeat the ringtone until the notification is removed
         ctx.getSystemService(NotificationManager::class.java).notify(ID_INCOMING, n)
+        MessageLog.add(ctx, "PUSH", "incoming call notification displayed")
     }
 
     fun cancelIncoming(ctx: Context) {

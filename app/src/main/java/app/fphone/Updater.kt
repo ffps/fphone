@@ -160,7 +160,7 @@ class Updater(private val app: App) {
         val dir = File(app.cacheDir, "updates")
         dir.mkdirs()
         dir.listFiles()?.forEach { it.delete() } // remove older downloads
-        val out = File(dir, "fPhone-$latestVersion.apk")
+        val out = File(dir, "Kukukha-$latestVersion.apk")
         http.newCall(Request.Builder().url(assetUrl).build()).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("download answered HTTP ${resp.code}")
             val body = resp.body ?: throw IOException("empty download")

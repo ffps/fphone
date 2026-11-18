@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// The version is set at build time: go build -ldflags "-X main.version=0.1.0"
-var version = "dev"
+// The version is set at build time: go build -ldflags "-X main.version=0.3.0"
+var version = "0.3.0"
 
 //go:embed fphone.example.yaml
 var exampleConfig []byte
@@ -32,9 +32,11 @@ Usage: fphone [-c fphone.yaml] <command>
   user del [-y] LOGIN          delete a user
   device list [LOGIN]          list devices
   device revoke ID             revoke the token of a device
+  device log ID                download the diagnostic log from an online phone
+  user name LOGIN [NAME]       show or change a user's display name
   fingerprint                  show the certificate fingerprint to pin in the client
-  push-test [-validate-only] [TOKEN]
-                               check the FCM setup (with a real push token: send a test message)
+  push-test [-validate-only] [TOKEN|id=ID|login=LOGIN] [title=TITLE] [text=TEXT]
+                               send a test push to a token, device, or all devices of a user
   example-config               print an example config
   version                      print the version
 
@@ -109,6 +111,9 @@ func cmdServe(cfg *Config) error {
 	hub := NewHub(store, cfg)
 	calls := NewCalls(cfg, store, hub)
 	hub.SetCalls(calls)
+	if err := startControlServer(ctx, cfg, hub); err != nil {
+		return err
+	}
 
 	if cfg.Turn.Enabled {
 		relay, err := NewRelayIP(cfg)

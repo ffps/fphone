@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         dynamicColor.value = app.prefs.dynamicColor
         startTab.intValue = intent.getIntExtra(EXTRA_TAB, 0)
         if (startTab.intValue == 1) Notifications.clearMissed(this)
+        if (app.prefs.loggedIn) refreshFcmTokenAtStartup()
         setContent {
             val prefs = rememberApp().prefs
             FPhoneTheme(dynamicColor.value, forceLight = !prefs.loggedIn) {
@@ -177,21 +178,40 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
 
     // ---------- login / logout / update ----------
 
+    private fun refreshFcmTokenAtStartup() {
+        try {
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                val token = if (task.isSuccessful) task.result.orEmpty() else ""
+                if (token.isNotBlank()) app.calls.updatePushToken(token)
+                else {
+                    app.prefs.pushIssue = true
+                    MessageLog.add(this, "PUSH", "startup token fetch failed; keeping previous token: ${task.exception}")
+                    app.uiTick.intValue++
+                }
+            }
+        } catch (e: Exception) {
+            app.prefs.pushIssue = true
+            MessageLog.add(this, "PUSH", "Firebase unavailable at startup; keeping previous token: $e")
+            app.uiTick.intValue++
+        }
+    }
+
     private fun doLogin(serverText: String, pin: String, login: String, password: String) {
-        val url = serverText.trim().trimEnd('/')
-        if (!url.startsWith("https://")) {
+        var url = serverText.trim().trimEnd('/')
+        if (!url.contains("://")) url = "https://$url"
+        val parsed = try { Uri.parse(url) } catch (_: Exception) { null }
+        if (!url.startsWith("https://", true) || parsed?.host.isNullOrBlank()) {
             loginError.value = getString(R.string.err_bad_url)
             return
         }
+        url += "/"
         if (login.isBlank() || password.isEmpty()) return
         val prefs = app.prefs
         prefs.server = url
         prefs.pin = pin.trim()
         loginError.value = null
         loginBusy.value = true
-
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            val fcm = if (task.isSuccessful) (task.result ?: "") else ""
+        val submit: (String) -> Unit = { fcm ->
             if (fcm.isNotEmpty()) prefs.fcmToken = fcm
             val deviceName = Build.MANUFACTURER + " " + Build.MODEL
             Bg.run({ app.net.login(login.trim(), password, deviceName, fcm) }) { r ->
@@ -199,11 +219,33 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
                 r.onSuccess { j ->
                     val u = j.getJSONObject("user")
                     prefs.saveSession(j.getString("token"), u.getLong("id"), u.optString("name"), login.trim())
+                    if (fcm.isNotEmpty()) {
+                        prefs.registeredFcmToken = fcm
+                        if (prefs.pendingFcmToken == fcm) prefs.pendingFcmToken = ""
+                        prefs.pushIssue = prefs.pendingFcmToken.isNotEmpty()
+                    }
                     app.calls.onLoggedIn()
                     requestMissingPermissions()
                 }
                 r.onFailure { e -> loginError.value = Texts.apiError(this, e) }
             }
+        }
+        try {
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                val token = if (task.isSuccessful) task.result.orEmpty() else ""
+                if (token.isNotBlank()) submit(token)
+                else {
+                    prefs.pushIssue = true
+                    MessageLog.add(this, "PUSH", "Firebase token fetch failed during login; using previous token if available: ${task.exception}")
+                    app.uiTick.intValue++
+                    submit(prefs.fcmToken)
+                }
+            }
+        } catch (e: Exception) {
+            prefs.pushIssue = true
+            MessageLog.add(this, "PUSH", "Firebase unavailable during login; using previous token if available: $e")
+            app.uiTick.intValue++
+            submit(prefs.fcmToken)
         }
     }
 

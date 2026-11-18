@@ -9,8 +9,8 @@ plugins {
 //   -PfphoneVersionName=X.Y.Z
 //   -PfphoneVersionCode=N
 val appIdProp = (findProperty("fphoneAppId") as String?) ?: "app.fphone"
-val versionNameProp = (findProperty("fphoneVersionName") as String?) ?: "0.0.0-dev"
-val versionCodeProp = (findProperty("fphoneVersionCode") as String?)?.toInt() ?: 1
+val versionNameProp = (findProperty("fphoneVersionName") as String?) ?: "0.3.0"
+val versionCodeProp = (findProperty("fphoneVersionCode") as String?)?.toInt() ?: 30000
 // GitHub repository (owner/name) that the app checks for updates; set by the workflow.
 val updateRepoProp = (findProperty("fphoneUpdateRepo") as String?) ?: ""
 

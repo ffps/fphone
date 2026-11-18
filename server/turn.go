@@ -21,8 +21,10 @@ const turnRealm = "fphone"
 // TurnServer is the TURN relay built into the binary.
 //
 // Credentials follow the usual "TURN REST" scheme:
-//   username   = "<expiry unix time>:<call id>:<user id>"
-//   credential = base64(HMAC-SHA1(secret, username))
+//
+//	username   = "<expiry unix time>:<call id>:<user id>"
+//	credential = base64(HMAC-SHA1(secret, username))
+//
 // The secret is random and lives only in memory (it changes at every start; credentials are
 // short-lived and are handed out per call anyway). The auth handler also checks that the call
 // is still active, so credentials stop working when the call ends.

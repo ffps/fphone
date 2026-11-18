@@ -58,6 +58,7 @@ fun LoginScreen(
     Column(
         Modifier
             .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
             .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
@@ -68,10 +69,10 @@ fun LoginScreen(
             Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.primary),
             contentAlignment = Alignment.Center
         ) {
-            Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null, modifier = Modifier.size(96.dp))
+            Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(96.dp))
         }
         Spacer(Modifier.height(12.dp))
-        Text("fPhone", style = MaterialTheme.typography.headlineMedium)
+        Text("Кукуха", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
         Text(
             stringResource(R.string.title_login),
             style = MaterialTheme.typography.titleMedium,
@@ -85,7 +86,13 @@ fun LoginScreen(
             label = { Text(stringResource(R.string.hint_server)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, keyboardType = KeyboardType.Uri),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -94,7 +101,11 @@ fun LoginScreen(
             label = { Text(stringResource(R.string.hint_login)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+            )
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -109,7 +120,11 @@ fun LoginScreen(
                     Text(stringResource(if (showPassword) R.string.hide_password else R.string.show_password))
                 }
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+            )
         )
 
         TextButton(onClick = { showPin = !showPin }, modifier = Modifier.align(Alignment.Start)) {
@@ -122,7 +137,11 @@ fun LoginScreen(
                 label = { Text(stringResource(R.string.hint_pin)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
 

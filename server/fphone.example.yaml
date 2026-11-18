@@ -5,6 +5,9 @@
 # Behind Keenetic (tls.mode: off) the router proxies https -> http to this address.
 listen: ":8099"
 
+# Local-only CLI control API (127.0.0.1; used by device log).
+control_port: 8098
+
 # The database (fphone.db) and, in self-signed mode, tls.crt / tls.key are stored here.
 data_dir: "data"
 
@@ -31,17 +34,17 @@ log:
   file: ""           # empty = stderr (journald), or a path such as /run/fphone/fphone.log (tmpfs)
   max_size_mb: 2     # rotate the file when it gets this big
   keep: 1            # how many old files to keep
-  level: "info"      # debug | info | warn | error
+  level: "debug"      # debug | info | warn | error
 
 auth:
-  token_ttl_days: 180 # sliding lifetime: extended on use, at most once a day
+  token_ttl_days: 90 # sliding lifetime: extended on use, at most once a day
 
 # TURN relay built into this server. Phones behind mobile NAT (CGNAT) send all call
 # media through it. Router setup (port forwarding to the machine that runs fphone):
 #   UDP + TCP  listen_port                         (default 3478)
 #   UDP        relay_port_min .. relay_port_max    (default 49160-49200)
 turn:
-  enabled: false
+  enabled: true
   listen_port: 3478
   # Public IPv4 address that is put into relay addresses.
   #   a fixed address  - used as is

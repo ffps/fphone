@@ -5,6 +5,7 @@ package app.fphone.ui
 import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import java.io.ByteArrayOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,8 +21,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -44,9 +50,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.painterResource
@@ -55,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.fphone.Bg
+import app.fphone.ApiException
 import app.fphone.app
 import app.fphone.R
 
@@ -73,54 +86,48 @@ fun SettingsScreen(
     var profileBusy by remember { mutableStateOf(false) }
     var profileError by remember { mutableStateOf<String?>(null) }
     var ownAvatarVersion by remember { mutableLongStateOf(0L) }
+    var photoSettings by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { result ->
             result.onSuccess { ownAvatarVersion = it }
         }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            profileBusy = true
-            profileError = null
-            Bg.run({
-                val raw = ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    val buffer = ByteArray(8192)
-                    val output = ByteArrayOutputStream()
-                    var total = 0
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        total += count
-                        require(total <= 16 * 1024 * 1024) { "source image is too large" }
-                        output.write(buffer, 0, count)
+
+
+    if (photoSettings) {
+        PhotoSettingsScreen(
+            currentAvatar = { Avatar(prefs.userId, prefs.userName, ownAvatarVersion, 180.dp) },
+            errorText = profileError,
+            onBack = { photoSettings = false },
+            onUpload = { bytes ->
+                profileBusy = true
+                Bg.run({ app.net.uploadAvatar(bytes) }) { result ->
+                    profileBusy = false
+                    result.onSuccess {
+                        profileError = null
+                        photoSettings = false
+                        app.calls.loadContacts()
+                        Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { r -> r.onSuccess { ownAvatarVersion = it } }
                     }
-                    output.toByteArray()
-                } ?: error("empty image")
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
-                require(bounds.outWidth > 0 && bounds.outHeight > 0) { "invalid image" }
-                val sample = maxOf(1, (maxOf(bounds.outWidth, bounds.outHeight) + 2047) / 2048)
-                val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("decode failed")
-                val scale = minOf(1f, 2048f / maxOf(bmp.width, bmp.height))
-                val resized = if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp
-                val out = ByteArrayOutputStream()
-                resized.compress(Bitmap.CompressFormat.JPEG, 88, out)
-                val bytes = out.toByteArray()
-                require(bytes.size <= 2 * 1024 * 1024) { "image too large" }
-                app.net.uploadAvatar(bytes)
-                bytes.size
-            }) { result ->
-                profileBusy = false
-                result.onSuccess {
-                    app.calls.loadContacts()
-                    Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { profile ->
-                        profile.onSuccess { ownAvatarVersion = it }
-                    }
-                    app.uiTick.intValue++
+                    result.onFailure { profileError = it.message ?: "Ошибка загрузки фото" }
                 }
-                result.onFailure { profileError = it.message ?: "Ошибка загрузки фото" }
-            }
-        }
+            },
+            onDelete = {
+                profileBusy = true
+                Bg.run({ app.net.deleteOwnAvatar() }) { result ->
+                    profileBusy = false
+                    result.onSuccess {
+                        profileError = null
+                        photoSettings = false
+                        app.calls.loadContacts()
+                        Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { r -> r.onSuccess { ownAvatarVersion = it } }
+                    }
+                    result.onFailure { profileError = it.message ?: "Ошибка удаления фото" }
+                }
+            },
+            busy = profileBusy
+        )
+        return
     }
 
     Scaffold(
@@ -151,7 +158,7 @@ fun SettingsScreen(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                Avatar(prefs.userId, prefs.userName, ownAvatarVersion, 64.dp)
+                Avatar(prefs.userId, prefs.userName, ownAvatarVersion, 64.dp, modifier = Modifier.clickable { profileError = null; photoSettings = true })
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(prefs.userName, style = MaterialTheme.typography.titleMedium)
                 }
@@ -159,37 +166,26 @@ fun SettingsScreen(
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 OutlinedTextField(
                     value = displayName, onValueChange = { displayName = it },
-                    label = { Text("Имя") }, singleLine = true, modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        profileBusy = true
-                        Bg.run({ app.net.updateName(displayName.trim()) }) { result ->
-                            profileBusy = false
-                            result.onSuccess {
-                                prefs.userName = displayName.trim()
-                                app.calls.loadContacts()
-                                app.uiTick.intValue++
-                            }
-                            result.onFailure { profileError = it.message ?: "Ошибка сохранения имени" }
-                        }
-                    }, enabled = !profileBusy && displayName.trim().isNotEmpty()) { Text("Сохранить имя") }
-                    OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !profileBusy) { Text("Фото") }
-                    OutlinedButton(onClick = {
-                        profileBusy = true
-                        Bg.run({ app.net.deleteOwnAvatar() }) { result ->
-                            profileBusy = false
-                            result.onSuccess {
-                                app.calls.loadContacts()
-                                Bg.run({ app.net.myProfile().optLong("avatar", 0L) }) { profile ->
-                                    profile.onSuccess { ownAvatarVersion = it }
+                    label = { Text("Имя") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            profileBusy = true
+                            Bg.run({ app.net.updateName(displayName.trim()) }) { result ->
+                                profileBusy = false
+                                result.onSuccess {
+                                    prefs.userName = displayName.trim()
+                                    app.calls.loadContacts()
+                                    app.uiTick.intValue++
                                 }
-                                app.uiTick.intValue++
+                                result.onFailure { e ->
+                                    profileError = if ((e as? ApiException)?.code == "name_taken") "Это имя или логин уже используется другим контактом" else (e.message ?: "Ошибка сохранения имени")
+                                }
                             }
-                            result.onFailure { profileError = it.message ?: "Ошибка удаления фото" }
+                        }, enabled = !profileBusy && displayName.trim().isNotEmpty()) {
+                            Icon(painterResource(R.drawable.ic_save), contentDescription = "Сохранить имя")
                         }
-                    }, enabled = !profileBusy) { Text("Сбросить фото") }
-                }
+                    }
+                )
                 if (profileBusy) CircularProgressIndicator(Modifier.padding(top = 8.dp).size(22.dp), strokeWidth = 2.dp)
                 profileError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -301,4 +297,93 @@ private fun StatusRow(title: String, ok: Boolean, okText: String, badText: Strin
             }
         }
     )
+}
+
+
+private fun decodePreview(ctx: Context, uri: Uri): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val sample = maxOf(1, (maxOf(bounds.outWidth, bounds.outHeight) + 999) / 1000)
+    return ctx.contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+}
+
+private fun appBgRun(ctx: Context, uri: Uri, rotation: Int, done: (Result<ByteArray>) -> Unit) {
+    Bg.run({
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Некорректное изображение" }
+        val sample = maxOf(1, (maxOf(bounds.outWidth, bounds.outHeight) + 1599) / 1600)
+        val source = ctx.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: error("Не удалось открыть фото")
+        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+        val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+        val side = minOf(rotated.width, rotated.height)
+        val square = Bitmap.createBitmap(rotated, (rotated.width - side) / 2, (rotated.height - side) / 2, side, side)
+        val resized = Bitmap.createScaledBitmap(square, 400, 400, true)
+        ByteArrayOutputStream().also { resized.compress(Bitmap.CompressFormat.JPEG, 88, it) }.toByteArray()
+    }, done)
+}
+
+@Composable
+private fun PhotoSettingsScreen(
+    currentAvatar: @Composable () -> Unit,
+    errorText: String?,
+    onBack: () -> Unit,
+    onUpload: (ByteArray) -> Unit,
+    onDelete: () -> Unit,
+    busy: Boolean
+) {
+    val ctx = LocalContext.current
+    var uri by remember { mutableStateOf<Uri?>(null) }
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    var rotation by remember { mutableIntStateOf(0) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var processing by remember { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { selected ->
+        uri = selected; rotation = 0; error = null
+    }
+    LaunchedEffect(uri) {
+        val selected = uri ?: return@LaunchedEffect
+        preview = try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { decodePreview(ctx, selected) }
+        } catch (e: Exception) {
+            error = e.message ?: "Не удалось открыть изображение"
+            null
+        }
+    }
+    Scaffold(topBar = {
+        TopAppBar(title = { Text("Фото профиля") }, navigationIcon = {
+            IconButton(onClick = onBack) { Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Назад") }
+        })
+    }) { padding ->
+        Column(Modifier.padding(padding).fillMaxWidth().padding(24.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+            val bmp = preview
+            if (bmp == null) currentAvatar() else Image(
+                bmp.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.size(220.dp).clip(RoundedCornerShape(16.dp)).graphicsLayer(rotationZ = rotation.toFloat())
+            )
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !busy && !processing) { Text("Выбрать фото") }
+            if (bmp != null) {
+                OutlinedButton(onClick = { rotation = (rotation + 90) % 360 }, enabled = !busy && !processing) { Text("Повернуть на 90°") }
+                Button(onClick = {
+                    val selected = uri ?: return@Button
+                    processing = true
+                    appBgRun(ctx, selected, rotation) { result ->
+                        processing = false
+                        result.onSuccess(onUpload)
+                        result.onFailure { error = it.message ?: "Ошибка обработки фото" }
+                    }
+                }, enabled = !busy && !processing) { Text("Сохранить фото") }
+            }
+            OutlinedButton(onClick = onDelete, enabled = !busy && !processing) { Text("Удалить фото") }
+            if (busy || processing) CircularProgressIndicator(Modifier.padding(top = 8.dp).size(24.dp), strokeWidth = 2.dp)
+            errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
 }

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -68,7 +69,7 @@ func readNewPassword() (string, error) {
 
 func cmdUser(cfg *Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("user: a subcommand is required (add, list, passwd, disable, enable, del)")
+		return errors.New("user: a subcommand is required (add, list, name, passwd, disable, enable, del)")
 	}
 	store, err := OpenStore(cfg.DataDir, cfg.tokenTTL())
 	if err != nil {
@@ -81,6 +82,8 @@ func cmdUser(cfg *Config, args []string) error {
 		return userAdd(store, rest)
 	case "list":
 		return userList(store)
+	case "name":
+		return userName(store, rest)
 	case "passwd":
 		return userPasswd(store, rest)
 	case "disable":
@@ -122,6 +125,9 @@ func userAdd(store *Store, args []string) error {
 		if errors.Is(err, ErrExists) {
 			return fmt.Errorf("user %q already exists", login)
 		}
+		if errors.Is(err, ErrNameTaken) {
+			return fmt.Errorf("display name %q is already used by another user", dn)
+		}
 		return err
 	}
 	fmt.Printf("user %q created\n", login)
@@ -143,6 +149,35 @@ func userList(store *Store) error {
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%d\t%s\n", u.ID, u.Login, u.Name, st, u.Devices, fmtTime(u.LastSeen))
 	}
 	return w.Flush()
+}
+
+func userName(store *Store, args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return errors.New("usage: fphone user name LOGIN [NAME] (omit NAME to show current name)")
+	}
+	u, _, err := store.UserByLogin(args[0])
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("user %q not found", args[0])
+		}
+		return err
+	}
+	if len(args) == 1 {
+		fmt.Println(u.Name)
+		return nil
+	}
+	name := strings.TrimSpace(args[1])
+	if name == "" || len([]rune(name)) > 64 {
+		return errors.New("name must contain 1-64 characters")
+	}
+	if err := store.SetName(u.ID, name); err != nil {
+		if errors.Is(err, ErrNameTaken) {
+			return fmt.Errorf("display name %q is already used by another user", name)
+		}
+		return err
+	}
+	fmt.Printf("display name for %q changed to %q\n", u.Login, name)
+	return nil
 }
 
 func userPasswd(store *Store, args []string) error {
@@ -217,7 +252,7 @@ func userDel(store *Store, args []string) error {
 
 func cmdDevice(cfg *Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("device: a subcommand is required (list, revoke)")
+		return errors.New("device: a subcommand is required (list, log, revoke)")
 	}
 	store, err := OpenStore(cfg.DataDir, cfg.tokenTTL())
 	if err != nil {
@@ -245,6 +280,38 @@ func cmdDevice(cfg *Config, args []string) error {
 				fmtTime(d.CreatedAt), fmtTime(d.LastSeen), fmtTime(d.ExpiresAt))
 		}
 		return w.Flush()
+	case "log":
+		if len(args) != 2 {
+			return errors.New("usage: fphone device log ID")
+		}
+		id, err := strconv.ParseInt(args[1], 10, 64)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("invalid device ID %q", args[1])
+		}
+		devices, err := store.ListDevices("")
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, d := range devices {
+			if d.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("device %d not found", id)
+		}
+		logText, err := requestDeviceLog(cfg, id)
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(cfg.DataDir, fmt.Sprintf("%d.log", id))
+		if err := os.WriteFile(path, []byte(logText), 0600); err != nil {
+			return err
+		}
+		fmt.Printf("device log saved: %s\n", path)
+		return nil
 	case "revoke":
 		if len(args) != 2 {
 			return errors.New("usage: fphone device revoke ID")
@@ -289,7 +356,7 @@ func cmdFingerprint(cfg *Config) error {
 func cmdPushTest(cfg *Config, args []string) error {
 	fs := flag.NewFlagSet("push-test", flag.ContinueOnError)
 	validate := fs.Bool("validate-only", false, "ask FCM to check the message without delivering it")
-	ttl := fs.Duration("ttl", time.Minute, "how long FCM keeps the message while the phone is unreachable (for example 10m)")
+	ttl := fs.Duration("ttl", time.Minute, "how long FCM keeps the message while the phone is unreachable")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -301,23 +368,127 @@ func cmdPushTest(cfg *Config, args []string) error {
 		return err
 	}
 	push.validateOnly = *validate
-
-	token := fs.Arg(0)
-	dummy := token == ""
-	if dummy {
+	var token, title, body string
+	var deviceID int64
+	var login string
+	for _, a := range fs.Args() {
+		k, v, ok := strings.Cut(a, "=")
+		if !ok {
+			if token != "" {
+				return errors.New("only one TOKEN may be specified")
+			}
+			token = a
+			continue
+		}
+		switch k {
+		case "id":
+			deviceID, err = strconv.ParseInt(v, 10, 64)
+			if err != nil || deviceID <= 0 {
+				return fmt.Errorf("invalid device ID %q", v)
+			}
+		case "login":
+			login = v
+		case "title":
+			title = v
+		case "text":
+			body = v
+		default:
+			return fmt.Errorf("unknown argument %q", k)
+		}
+	}
+	if deviceID > 0 && login != "" {
+		return errors.New("use either id=ID or login=LOGIN, not both")
+	}
+	if (deviceID > 0 || login != "") && token != "" {
+		return errors.New("do not combine TOKEN with id=ID or login=LOGIN")
+	}
+	if title == "" {
+		title = "fPhone test"
+	}
+	if body == "" {
+		body = "hello from fphone"
+	}
+	type target struct {
+		id           int64
+		login, token string
+	}
+	targets := []target{}
+	dummy := false
+	if deviceID > 0 || login != "" {
+		store, e := OpenStore(cfg.DataDir, cfg.tokenTTL())
+		if e != nil {
+			return e
+		}
+		defer store.Close()
+		if deviceID > 0 {
+			t, l, e := store.PushTargetByDevice(deviceID)
+			if e != nil {
+				if errors.Is(e, ErrNotFound) {
+					return fmt.Errorf("device %d not found", deviceID)
+				}
+				return e
+			}
+			if t.Token == "" {
+				return fmt.Errorf("device %d has no FCM token", deviceID)
+			}
+			targets = append(targets, target{t.DeviceID, l, t.Token})
+		} else {
+			u, _, e := store.UserByLogin(login)
+			if e != nil {
+				if errors.Is(e, ErrNotFound) {
+					return fmt.Errorf("user %q not found", login)
+				}
+				return e
+			}
+			ts, e := store.PushTargets(u.ID)
+			if e != nil {
+				return e
+			}
+			if len(ts) == 0 {
+				return fmt.Errorf("user %q has no devices with FCM tokens", login)
+			}
+			for _, t := range ts {
+				targets = append(targets, target{t.DeviceID, u.Login, t.Token})
+			}
+		}
+	} else if token != "" {
+		targets = append(targets, target{0, "manual", token})
+	} else {
 		token = "fphone-test-token-that-does-not-exist"
-		fmt.Println("no token given: using a fake token (this checks only the credentials and the connection to Google)")
+		dummy = true
+		targets = append(targets, target{0, "dummy", token})
+		fmt.Println("no target given: using a fake token (credentials and connection test only)")
 	}
 	fmt.Println("project:", push.project)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	err = push.Send(ctx, token, map[string]string{
-		"type": "test",
-		"text": "hello from fphone",
-		"time": strconv.FormatInt(time.Now().Unix(), 10),
-	}, "fphone-test", *ttl)
-	return explainPushResult(err, dummy, *validate)
+	for _, t := range targets {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		messageID, e := push.SendWithResult(ctx, t.token, map[string]string{"type": "test", "title": title, "text": body, "time": strconv.FormatInt(time.Now().Unix(), 10)}, "fphone-test", *ttl)
+		cancel()
+		if e == nil {
+			if t.id > 0 {
+				fmt.Printf("OK: device %d (%s), FCM message %s\n", t.id, t.login, messageID)
+			} else {
+				fmt.Printf("OK: FCM accepted message %s\n", messageID)
+			}
+			continue
+		}
+		if errors.Is(e, ErrTokenInvalid) && dummy {
+			fmt.Println("OK: credentials and connection work (FCM rejected the expected fake token).")
+			continue
+		}
+		if errors.Is(e, ErrTokenInvalid) {
+			return fmt.Errorf("FCM does not know the token for %s (UNREGISTERED)", t.login)
+		}
+		if dummy && strings.Contains(e.Error(), "HTTP 400") {
+			fmt.Println("OK: credentials and connection work (FCM rejected the expected fake token).")
+			continue
+		}
+		return e
+	}
+	if *validate {
+		fmt.Println("validate-only: no message was delivered")
+	}
+	return nil
 }
 
 func explainPushResult(err error, dummy, validateOnly bool) error {

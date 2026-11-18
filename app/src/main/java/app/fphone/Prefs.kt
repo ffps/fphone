@@ -10,7 +10,7 @@ class Prefs(ctx: Context) {
     private fun str(key: String): String = sp.getString(key, "") ?: ""
     private fun put(key: String, value: String) = sp.edit().putString(key, value).apply()
 
-    /** Server address, for example https://domain.com (no trailing slash). */
+    /** Server address, normalized as https://domain.com/. */
     var server: String
         get() = str("server")
         set(v) = put("server", v)
@@ -40,6 +40,22 @@ class Prefs(ctx: Context) {
     var fcmToken: String
         get() = str("fcm_token")
         set(v) = put("fcm_token", v)
+
+    var registeredFcmToken: String
+        get() = str("registered_fcm_token")
+        set(v) = put("registered_fcm_token", v)
+
+    var pendingFcmToken: String
+        get() = str("pending_fcm_token")
+        set(v) = put("pending_fcm_token", v)
+
+    var lastFcmRefreshAt: Long
+        get() = sp.getLong("last_fcm_refresh_at", 0L)
+        set(v) = sp.edit().putLong("last_fcm_refresh_at", v).apply()
+
+    var pushIssue: Boolean
+        get() = sp.getBoolean("push_issue", false)
+        set(v) = sp.edit().putBoolean("push_issue", v).apply()
 
     /** The order of the contact list that the user made by dragging (user IDs). */
     var contactOrder: List<Long>

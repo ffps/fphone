@@ -65,6 +65,11 @@ func NewFCM(cfg *Config) (*FCM, error) {
 // Send sends one high-priority data message. All values in data must be strings.
 // Messages with the same collapseKey replace each other while they wait for an offline phone.
 func (f *FCM) Send(ctx context.Context, token string, data map[string]string, collapseKey string, ttl time.Duration) error {
+	_, err := f.SendWithResult(ctx, token, data, collapseKey, ttl)
+	return err
+}
+
+func (f *FCM) SendWithResult(ctx context.Context, token string, data map[string]string, collapseKey string, ttl time.Duration) (string, error) {
 	payload := map[string]any{
 		"message": map[string]any{
 			"token": token,
@@ -81,21 +86,25 @@ func (f *FCM) Send(ctx context.Context, token string, data map[string]string, co
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if resp.StatusCode == http.StatusOK {
-		return nil
+		var ok struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(b, &ok)
+		return ok.Name, nil
 	}
 	var er struct {
 		Error struct {
@@ -109,8 +118,8 @@ func (f *FCM) Send(ctx context.Context, token string, data map[string]string, co
 	json.Unmarshal(b, &er)
 	for _, d := range er.Error.Details {
 		if d.ErrorCode == "UNREGISTERED" {
-			return ErrTokenInvalid
+			return "", ErrTokenInvalid
 		}
 	}
-	return fmt.Errorf("FCM HTTP %d %s: %s", resp.StatusCode, er.Error.Status, er.Error.Message)
+	return "", fmt.Errorf("FCM HTTP %d %s: %s", resp.StatusCode, er.Error.Status, er.Error.Message)
 }

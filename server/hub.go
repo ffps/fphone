@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -26,8 +29,10 @@ type Hub struct {
 	upgrader websocket.Upgrader
 	calls    *Calls
 
-	mu      sync.Mutex
-	clients map[*Client]struct{}
+	mu          sync.Mutex
+	clients     map[*Client]struct{}
+	logMu       sync.Mutex
+	pendingLogs map[string]chan deviceLogResult
 }
 
 type Client struct {
@@ -185,6 +190,15 @@ func (c *Client) readLoop() {
 				c.sendErr("calls_disabled", m.T)
 			} else {
 				c.hub.calls.Handle(c, m.T, data)
+			}
+		case "device.log.response":
+			var response struct {
+				Request string `json:"request"`
+				Text    string `json:"text"`
+				Error   string `json:"error"`
+			}
+			if json.Unmarshal(data, &response) == nil {
+				c.hub.completeDeviceLog(response.Request, deviceLogResult{text: response.Text, err: response.Error})
 			}
 		default:
 			c.sendJSON(map[string]any{"t": "error", "code": "unknown_type", "type": truncRunes(m.T, 32)})
@@ -380,6 +394,62 @@ func (h *Hub) Run(ctx context.Context) {
 					c.close(4401, "unauthorized")
 				}
 			}
+		}
+	}
+}
+
+type deviceLogResult struct {
+	text string
+	err  string
+}
+
+func (h *Hub) RequestDeviceLog(deviceID int64, timeout time.Duration) (string, error) {
+	var target *Client
+	for _, c := range h.snapshot() {
+		if c.sess.DeviceID == deviceID {
+			target = c
+			break
+		}
+	}
+	if target == nil {
+		return "", errors.New("device is not connected (phone is not in foreground)")
+	}
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(b)
+	ch := make(chan deviceLogResult, 1)
+	h.logMu.Lock()
+	if h.pendingLogs == nil {
+		h.pendingLogs = map[string]chan deviceLogResult{}
+	}
+	h.pendingLogs[id] = ch
+	h.logMu.Unlock()
+	target.sendJSON(map[string]any{"t": "device.log.request", "request": id})
+	select {
+	case r := <-ch:
+		if r.err != "" {
+			return "", errors.New(r.err)
+		}
+		return r.text, nil
+	case <-time.After(timeout):
+		h.logMu.Lock()
+		delete(h.pendingLogs, id)
+		h.logMu.Unlock()
+		return "", errors.New("phone did not return its diagnostic log (it may have left the foreground)")
+	}
+}
+
+func (h *Hub) completeDeviceLog(id string, result deviceLogResult) {
+	h.logMu.Lock()
+	ch := h.pendingLogs[id]
+	delete(h.pendingLogs, id)
+	h.logMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- result:
+		default:
 		}
 	}
 }

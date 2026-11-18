@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("not found")
-	ErrExists   = errors.New("already exists")
+	ErrNotFound  = errors.New("not found")
+	ErrExists    = errors.New("already exists")
+	ErrNameTaken = errors.New("display name is already used by another user")
 )
 
 // last_seen and expires_at are updated at most once a day per device,
@@ -90,44 +91,48 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
 		return err
 	}
-	if v >= 1 {
-		return nil
+	if v < 1 {
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, pass_hash TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
+			`CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, device_uid TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, fcm_token TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, expires_at INTEGER NOT NULL, UNIQUE(user_id, device_uid))`,
+			`CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id)`,
+		}
+		for _, q := range stmts {
+			if _, err := s.db.Exec(q); err != nil {
+				return fmt.Errorf("database migration: %w", err)
+			}
+		}
+		v = 1
 	}
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS users (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			login      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-			name       TEXT NOT NULL,
-			pass_hash  TEXT NOT NULL,
-			disabled   INTEGER NOT NULL DEFAULT 0,
-			created_at INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS devices (
-			id          INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			device_uid  TEXT NOT NULL,
-			name        TEXT NOT NULL,
-			token_hash  TEXT NOT NULL UNIQUE,
-			fcm_token   TEXT NOT NULL DEFAULT '',
-			created_at  INTEGER NOT NULL,
-			last_seen   INTEGER NOT NULL,
-			expires_at  INTEGER NOT NULL,
-			UNIQUE(user_id, device_uid)
-		)`,
-		`CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id)`,
-	}
-	for _, q := range stmts {
-		if _, err := s.db.Exec(q); err != nil {
+	if v < 2 {
+		_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS call_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, call_id TEXT NOT NULL, caller_id INTEGER NOT NULL, callee_id INTEGER NOT NULL,
+			caller_login TEXT NOT NULL, callee_login TEXT NOT NULL, caller_name TEXT NOT NULL, callee_name TEXT NOT NULL,
+			media TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
+			ring_s INTEGER NOT NULL, talk_s INTEGER NOT NULL)`)
+		if err != nil {
 			return fmt.Errorf("database migration: %w", err)
 		}
+		if _, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS call_history_pair ON call_history(caller_id,callee_id,ended_at DESC)`); err != nil {
+			return err
+		}
+		if _, err = s.db.Exec(`PRAGMA user_version = 2`); err != nil {
+			return err
+		}
 	}
-	_, err := s.db.Exec(`PRAGMA user_version = 1`)
-	return err
+	return nil
 }
 
 // ---------- users ----------
 
 func (s *Store) CreateUser(login, name, passHash string) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE name=? COLLATE NOCASE OR login=? COLLATE NOCASE`, name, name).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrNameTaken
+	}
 	_, err := s.db.Exec(`INSERT INTO users(login,name,pass_hash,created_at) VALUES(?,?,?,?)`,
 		login, name, passHash, time.Now().Unix())
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
@@ -153,6 +158,13 @@ func (s *Store) UserByLogin(login string) (User, string, error) {
 }
 
 func (s *Store) SetName(userID int64, name string) error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id<>? AND (name=? COLLATE NOCASE OR login=? COLLATE NOCASE)`, userID, name, name).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrNameTaken
+	}
 	res, err := s.db.Exec(`UPDATE users SET name=? WHERE id=?`, name, userID)
 	if err != nil {
 		return err
@@ -414,4 +426,65 @@ func (s *Store) PushTargets(userID int64) ([]PushTarget, error) {
 func (s *Store) ClearFCM(deviceID int64, token string) error {
 	_, err := s.db.Exec(`UPDATE devices SET fcm_token='' WHERE id=? AND fcm_token=?`, deviceID, token)
 	return err
+}
+
+type LastCallRow struct {
+	Ts          int64  `json:"ts"`
+	Outgoing    bool   `json:"outgoing"`
+	Video       bool   `json:"video"`
+	Result      string `json:"result"`
+	DurationSec int    `json:"duration_sec"`
+}
+
+func (s *Store) RecordCall(c Call, reason string, ended time.Time, ring, talk int) error {
+	_, err := s.db.Exec(`INSERT INTO call_history(call_id,caller_id,callee_id,caller_login,callee_login,caller_name,callee_name,media,reason,created_at,ended_at,ring_s,talk_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.CallerID, c.CalleeID, c.CallerLogin, c.CalleeLogin, c.CallerName, c.CalleeName, c.Media, reason, c.CreatedAt.Unix(), ended.Unix(), ring, talk)
+	return err
+}
+
+func (s *Store) LastCallBetween(userID, peerID int64) (*LastCallRow, error) {
+	var r LastCallRow
+	var media string
+	var reason string
+	var callerID int64
+	err := s.db.QueryRow(`SELECT created_at,caller_id,media,reason,talk_s FROM call_history WHERE (caller_id=? AND callee_id=?) OR (caller_id=? AND callee_id=?) ORDER BY ended_at DESC,id DESC LIMIT 1`, userID, peerID, peerID, userID).Scan(&r.Ts, &callerID, &media, &reason, &r.DurationSec)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.Outgoing = callerID == userID
+	r.Video = media == "video"
+	switch reason {
+	case "no_answer", "cancelled", "offline":
+		if !r.Outgoing {
+			r.Result = "missed"
+		} else {
+			r.Result = reason
+		}
+	case "rejected":
+		r.Result = "rejected"
+	case "declined":
+		r.Result = "declined"
+	case "answered_elsewhere":
+		r.Result = "elsewhere"
+	case "busy":
+		r.Result = "busy"
+	case "hangup", "timeout":
+		r.Result = "answered"
+	default:
+		r.Result = reason
+	}
+	return &r, nil
+}
+
+func (s *Store) PushTargetByDevice(deviceID int64) (PushTarget, string, error) {
+	var t PushTarget
+	var login string
+	err := s.db.QueryRow(`SELECT d.id,d.fcm_token,u.login FROM devices d JOIN users u ON u.id=d.user_id WHERE d.id=?`, deviceID).Scan(&t.DeviceID, &t.Token, &login)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PushTarget{}, "", ErrNotFound
+	}
+	return t, login, err
 }

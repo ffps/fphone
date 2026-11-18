@@ -48,8 +48,9 @@ func probeHairpin(relayIP net.IP, port int) (net.IP, error) {
 // TURN server must treat as relayIP (nil = no rewrite needed or wanted).
 //
 // turn.hairpin_src:  ""     only report
-//                    "auto" report and apply the workaround automatically
-//                    "<ip>" apply this address (and report if it does not match what was seen)
+//
+//	"auto" report and apply the workaround automatically
+//	"<ip>" apply this address (and report if it does not match what was seen)
 func resolveHairpin(cfg *Config, relayIP net.IP) net.IP {
 	mode := cfg.Turn.HairpinSrc
 	port := cfg.Turn.RelayPortMax // any port of the forwarded relay range that is still free

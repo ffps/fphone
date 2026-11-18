@@ -11,10 +11,10 @@ import (
 
 // RelayIP is the public IPv4 address that the TURN server puts into relay addresses.
 //
-//   turn.relay_ip set          -> fixed address
-//   public_host is an IPv4     -> fixed address
-//   public_host is a DNS name  -> resolved at start and re-resolved periodically, so a
-//                                 dynamic public IP (with dynamic DNS) is followed automatically
+//	turn.relay_ip set          -> fixed address
+//	public_host is an IPv4     -> fixed address
+//	public_host is a DNS name  -> resolved at start and re-resolved periodically, so a
+//	                              dynamic public IP (with dynamic DNS) is followed automatically
 type RelayIP struct {
 	mu   sync.RWMutex
 	ip   net.IP
