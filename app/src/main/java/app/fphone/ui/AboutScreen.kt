@@ -61,7 +61,7 @@ fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
     }) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(56.dp))
+                Image(painterResource(R.drawable.app_icon), contentDescription = null, modifier = Modifier.size(56.dp))
                 Text("Кукуха", modifier = Modifier.padding(start = 16.dp), style = androidx.compose.material3.MaterialTheme.typography.titleLarge)
             }
             SectionTitle("Версия")

@@ -69,7 +69,7 @@ fun LoginScreen(
             Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.primary),
             contentAlignment = Alignment.Center
         ) {
-            Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(96.dp))
+            Image(painterResource(R.drawable.app_icon), contentDescription = null, modifier = Modifier.size(96.dp))
         }
         Spacer(Modifier.height(12.dp))
         Text("Кукуха", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)

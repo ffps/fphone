@@ -105,7 +105,7 @@ fun MainScreen(
                                     .background(MaterialTheme.colorScheme.primary),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Image(painterResource(R.mipmap.ic_launcher), contentDescription = null, modifier = Modifier.size(30.dp))
+                                Image(painterResource(R.drawable.app_icon), contentDescription = null, modifier = Modifier.size(30.dp))
                             }
                             Text(stringResource(if (tab == 0) R.string.tab_contacts else R.string.tab_recents))
                         }
