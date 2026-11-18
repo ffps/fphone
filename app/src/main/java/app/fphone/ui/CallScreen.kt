@@ -98,7 +98,7 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
     var sawCall by remember { mutableStateOf(false) }
     LaunchedEffect(st) {
         if (st == CallManager.State.IDLE) {
-            if (sawCall) delay(1500)
+            if (sawCall) delay(if (calls.lastEndReason in setOf("busy", "already_in_call")) 2200 else 1500)
             onFinish()
         } else sawCall = true
     }

@@ -4,7 +4,9 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.AudioDeviceInfo
 import android.media.ToneGenerator
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -770,21 +772,72 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         am.requestAudioFocus(req)
         audioFocus = req
         audioStarted = true
-        speaker = true // use loudspeaker by default for both audio and video calls
+        // Prefer a connected Bluetooth headset. Otherwise start on the phone loudspeaker.
+        speaker = !hasBluetoothHeadset(am)
         applySpeaker()
+        MessageLog.add(app, "AUDIO", "call route initialized: ${if (speaker) "speaker" else "Bluetooth/earpiece"}")
     }
+
+    private fun bluetoothCommunicationDevice(am: AudioManager): AudioDeviceInfo? {
+        val outputs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            am.availableCommunicationDevices
+        } else {
+            @Suppress("DEPRECATION")
+            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
+        }
+        return outputs.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+        }
+    }
+
+    private fun hasBluetoothHeadset(am: AudioManager): Boolean = bluetoothCommunicationDevice(am) != null
 
     private fun applySpeaker() {
         val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        @Suppress("DEPRECATION")
-        am.isSpeakerphoneOn = speaker
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val target = if (speaker) {
+                am.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            } else {
+                bluetoothCommunicationDevice(am) ?: am.availableCommunicationDevices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                }
+            }
+            if (target != null) {
+                am.setCommunicationDevice(target)
+            } else {
+                am.clearCommunicationDevice()
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                if (!speaker && hasBluetoothHeadset(am)) {
+                    am.isSpeakerphoneOn = false
+                    am.startBluetoothSco()
+                    am.isBluetoothScoOn = true
+                } else {
+                    am.stopBluetoothSco()
+                    am.isBluetoothScoOn = false
+                    am.isSpeakerphoneOn = speaker
+                }
+            }
+        }
+        MessageLog.add(app, "AUDIO", "route changed: ${if (speaker) "phone speaker" else if (hasBluetoothHeadset(am)) "Bluetooth headset" else "earpiece"}")
     }
 
     private fun stopAudio() {
         if (!audioStarted) return
         val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        @Suppress("DEPRECATION")
-        am.isSpeakerphoneOn = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            am.clearCommunicationDevice()
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                am.stopBluetoothSco()
+                am.isBluetoothScoOn = false
+                am.isSpeakerphoneOn = false
+            }
+        }
         audioFocus?.let { am.abandonAudioFocusRequest(it) }
         audioFocus = null
         am.mode = AudioManager.MODE_NORMAL
