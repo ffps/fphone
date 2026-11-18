@@ -413,13 +413,15 @@ private fun PhotoSettingsScreen(
                     Image(
                         bmp.asImageBitmap(),
                         contentDescription = null,
-                        contentScale = ContentScale.Crop,
+                        contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer {
                                 rotationZ = rotation.toFloat()
-                                scaleX = zoom
-                                scaleY = zoom
+                                val minSide = minOf(bmp.width, bmp.height).toFloat()
+                                val fitScale = maxOf(bmp.width, bmp.height).toFloat() / minSide
+                                scaleX = zoom * fitScale
+                                scaleY = zoom * fitScale
                                 translationX = panX * size.width
                                 translationY = panY * size.height
                             }

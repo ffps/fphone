@@ -404,6 +404,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         cameraOn = video
         frontCameraWanted = true
         remoteCameraOn = video
+        // Start the communication route before local ringback so it follows the selected speaker.
+        startAudio(video)
         startRingback()
         val invite = JSONObject()
             .put("t", "call.invite")
@@ -768,7 +770,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         am.requestAudioFocus(req)
         audioFocus = req
         audioStarted = true
-        speaker = video // video calls start on the loudspeaker, audio calls on the earpiece
+        speaker = true // use loudspeaker by default for both audio and video calls
         applySpeaker()
     }
 
