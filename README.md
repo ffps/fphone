@@ -171,3 +171,9 @@ downloads `Kukukha-X.Y.Z.apk` from the GitHub release and starts the system inst
 - Kept the existing audio attributes and audio-routing implementation unchanged.
 
 Note: Android 8 allows only one ordinary app to capture microphone audio at a time. If another app or system service already owns the microphone, WebRTC recording can still fail until that capture stops; the app now records that failure instead of relying on track toggling.
+
+# Kukukha 0.3.10
+
+- Defer creation of the answering device's local video track until the remote offer has been applied.
+- Add the camera track before creating the answer SDP, so it is associated with the negotiated Unified Plan video transceiver.
+- Keep the caller's existing video startup flow unchanged.

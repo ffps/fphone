@@ -728,7 +728,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         engine = e
         try {
             val config = ice ?: JSONObject().put("servers", JSONArray()).put("policy", "all")
-            e.start(config, c.videoCapable && cameraWanted && cameraOn, frontCameraWanted)
+            e.start(config, c.videoCapable && cameraWanted && cameraOn, frontCameraWanted, deferVideo = !c.outgoing)
             e.setVideoEnabled(c.videoCapable && cameraWanted && cameraOn)
         } catch (t: Throwable) {
             MessageLog.add(app, "cannot start WebRTC: $t")
