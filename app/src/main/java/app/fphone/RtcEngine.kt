@@ -107,6 +107,24 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
             .build()
         val audioModule = JavaAudioDeviceModule.builder(ctx.applicationContext)
             .setAudioAttributes(voiceAttributes)
+            .setAudioRecordErrorCallback(object : JavaAudioDeviceModule.AudioRecordErrorCallback {
+                override fun onWebRtcAudioRecordInitError(errorMessage: String) {
+                    main.post { if (!closed) events.onError("microphone init failed: $errorMessage") }
+                }
+
+                override fun onWebRtcAudioRecordStartError(
+                    errorCode: JavaAudioDeviceModule.AudioRecordStartErrorCode,
+                    errorMessage: String
+                ) {
+                    main.post {
+                        if (!closed) events.onError("microphone start failed ($errorCode): $errorMessage")
+                    }
+                }
+
+                override fun onWebRtcAudioRecordError(errorMessage: String) {
+                    main.post { if (!closed) events.onError("microphone error: $errorMessage") }
+                }
+            })
             .createAudioDeviceModule()
         adm = audioModule
         val f = PeerConnectionFactory.builder()
@@ -266,7 +284,8 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
     // ---------- controls ----------
 
     fun setMuted(muted: Boolean) {
-        audioTrack?.setEnabled(!muted)
+        // Mute the capture device without disabling the track or restarting AudioRecord.
+        adm?.setMicrophoneMute(muted)
     }
 
     fun setVideoEnabled(on: Boolean) {

@@ -163,3 +163,11 @@ downloads `Kukukha-X.Y.Z.apk` from the GitHub release and starts the system inst
 - Added `device log ID`, which requests the phone's journal over its existing WebSocket and saves it as `data_dir/ID.log`.
 - Added a loopback-only CLI control endpoint for the device-log request.
 - Set defaults to a 90-day session lifetime, 60-second unanswered timeout, five concurrent calls, TURN enabled, and relay ICE policy.
+
+# Kukukha 0.3.9
+
+- Microphone mute now uses WebRTC AudioDeviceModule microphone mute instead of disabling/re-enabling the audio track. This avoids restarting AudioRecord when the user toggles the microphone.
+- Added app diagnostic-log entries for WebRTC microphone initialization and recording errors.
+- Kept the existing audio attributes and audio-routing implementation unchanged.
+
+Note: Android 8 allows only one ordinary app to capture microphone audio at a time. If another app or system service already owns the microphone, WebRTC recording can still fail until that capture stops; the app now records that failure instead of relying on track toggling.
