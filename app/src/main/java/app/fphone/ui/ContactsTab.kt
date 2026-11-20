@@ -14,8 +14,11 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -71,7 +74,7 @@ fun orderedIds(contacts: List<Contact>, order: List<Long>): List<Long> {
 
 /** The list of contacts. A long press on a contact starts dragging it to another place. */
 @Composable
-fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Modifier) {
+fun ContactsTab(onCall: (Long, String, Boolean, Boolean) -> Unit, modifier: Modifier = Modifier) {
     val app = rememberApp()
     val calls = app.calls
     val visibleContacts = calls.contacts.filter { it.reachable || it.online }
@@ -83,15 +86,21 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val listState = rememberLazyListState()
     val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
     var pullDistance by remember { mutableFloatStateOf(0f) }
     var refreshing by remember { mutableStateOf(false) }
     var selectedContact by remember { mutableStateOf<Contact?>(null) }
     fun refreshContacts() {
+        if (refreshing) return
         refreshing = true
-        calls.loadContacts()
-        scope.launch { kotlinx.coroutines.delay(800); refreshing = false }
+        calls.loadContacts { refreshing = false }
     }
+    val refreshTransition = rememberInfiniteTransition(label = "contacts-refresh")
+    val refreshRotation by refreshTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+        label = "contacts-refresh-rotation"
+    )
     val refreshConnection = remember(listState, density) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
@@ -125,9 +134,14 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                     onDragCancel = { emptyPull = 0f }
                 )
             },
-            contentAlignment = Alignment.TopCenter
+            contentAlignment = Alignment.Center
         ) {
-            if (refreshing) Icon(painterResource(R.drawable.ic_refresh), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp).size(24.dp))
+            if (refreshing) Icon(
+                painterResource(R.drawable.ic_refresh),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(48.dp).graphicsLayer { rotationZ = refreshRotation; alpha = 0.5f }
+            )
         }
     } else {
         val finishDrag: () -> Unit = {
@@ -153,7 +167,7 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                         online = online,
                         canCall = canCall,
                         dragged = isDragged,
-                        onCall = onCall,
+                        onCall = { id, name, video -> onCall(id, name, video, false) },
                         onDetails = { selectedContact = c },
                         modifier = itemModifier.pointerInput(id) {
                             detectDragGesturesAfterLongPress(
@@ -190,12 +204,17 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                 }
             }
         }
-        if (refreshing) Icon(painterResource(R.drawable.ic_refresh), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp).size(24.dp))
+        if (refreshing) Icon(
+            painterResource(R.drawable.ic_refresh),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.align(Alignment.Center).size(48.dp).graphicsLayer { rotationZ = refreshRotation; alpha = 0.5f }
+        )
         }
     }
     selectedContact?.let { c ->
         ContactDetailsDialog(c, online = c.online || c.id in calls.online, canCall = calls.state == CallManager.State.IDLE && (c.reachable || c.id in calls.online),
-            onDismiss = { selectedContact = null }, onCall = { selectedContact = null; onCall(c.id,c.name,true) })
+            onDismiss = { selectedContact = null }, onCall = { selectedContact = null; onCall(c.id,c.name,true,false) })
     }
 }
 

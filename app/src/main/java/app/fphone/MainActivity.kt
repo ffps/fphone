@@ -36,7 +36,8 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     private val loginError = mutableStateOf<String?>(null)
     private val startTab = mutableIntStateOf(0)
     private var installRequested = false
-    private var pendingCall: Triple<Long, String, Boolean>? = null
+    private data class PendingCall(val peerId: Long, val name: String, val video: Boolean, val fromRecents: Boolean)
+    private var pendingCall: PendingCall? = null
 
     /** Background permission request (audio, camera, notifications) � no follow-up action. */
     private val permissionsLauncher = registerForActivityResult(
@@ -59,7 +60,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
             return@registerForActivityResult
         }
         // Without the camera permission a video call becomes an audio call.
-        startCall(p.first, p.second, p.third && granted(Manifest.permission.CAMERA))
+        startCall(p.peerId, p.name, p.video && granted(Manifest.permission.CAMERA), p.fromRecents)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,7 +90,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
                             dynamicColor.value = v
                             app.prefs.dynamicColor = v
                         },
-                        onCall = { id, name, video -> callClicked(id, name, video) },
+                        onCall = { id, name, video, fromRecents -> callClicked(id, name, video, fromRecents) },
                         onUpdate = { updateClicked() },
                         onLogout = { logout() }
                     )
@@ -159,20 +160,20 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         if (need.isNotEmpty()) permissionsLauncher.launch(need.toTypedArray())
     }
 
-    private fun callClicked(peerId: Long, name: String, video: Boolean) {
+    private fun callClicked(peerId: Long, name: String, video: Boolean, fromRecents: Boolean) {
         val need = ArrayList<String>()
         if (!granted(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO)
         if (video && !granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA)
         if (need.isNotEmpty()) {
-            pendingCall = Triple(peerId, name, video)
+            pendingCall = PendingCall(peerId, name, video, fromRecents)
             callPermissionLauncher.launch(need.toTypedArray())
             return
         }
-        startCall(peerId, name, video)
+        startCall(peerId, name, video, fromRecents)
     }
 
-    private fun startCall(peerId: Long, name: String, video: Boolean) {
-        app.calls.startCall(peerId, name, video)
+    private fun startCall(peerId: Long, name: String, video: Boolean, fromRecents: Boolean) {
+        app.calls.startCall(peerId, name, video, fromRecents)
         startActivity(CallActivity.intent(this))
     }
 

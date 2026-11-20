@@ -61,6 +61,7 @@
     <string name="reason_no_answer">Нет ответа</string>
     <string name="reason_busy">Абонент занят</string>
     <string name="reason_offline">Абонент недоступен</string>
+    <string name="reason_server_unavailable">Нет связи с сервером</string>
     <string name="reason_timeout">Потеряна связь</string>
     <string name="reason_answered_elsewhere">Ответили на другом устройстве</string>
     <string name="reason_gone">Звонок уже завершён</string>

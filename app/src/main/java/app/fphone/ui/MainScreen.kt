@@ -59,7 +59,7 @@ fun MainScreen(
     startTab: Int,
     dynamicColor: Boolean,
     onDynamicColor: (Boolean) -> Unit,
-    onCall: (Long, String, Boolean) -> Unit,
+    onCall: (Long, String, Boolean, Boolean) -> Unit,
     onUpdate: () -> Unit,
     onLogout: () -> Unit
 ) {

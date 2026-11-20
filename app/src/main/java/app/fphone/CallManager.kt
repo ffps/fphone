@@ -59,6 +59,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         private set
     var connected = false // authenticated WebSocket connection to the server
         private set
+    var lastEndAtElapsedRealtime = 0L
+        private set
     var contacts: List<Contact> = emptyList()
         private set
     var online: Set<Long> = emptySet()
@@ -83,6 +85,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     // ---------- internal state ----------
 
     private var sig: Signaling? = null
+    private var serverUnavailable = false
     private var visible = 0
     private var reconnectDelay = 1000L
     private var ice: JSONObject? = null
@@ -108,6 +111,17 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private val clearReject = Runnable {
         pendingRejectId = null
         maybeDisconnect()
+    }
+    private val connectionLostTimeout = Runnable {
+        if (call != null && !connected) {
+            MessageLog.add(app, "CALL", "signalling connection did not recover; ending call")
+            endLocal("server_lost")
+        }
+    }
+    private val unavailableCallTimeout = Runnable {
+        if (call != null && state == State.OUTGOING && lastEndReason == "server_unavailable") {
+            endLocal("server_unavailable")
+        }
     }
 
     // ---------- listeners and screen visibility ----------
@@ -138,12 +152,14 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     // ---------- login state ----------
 
     fun onLoggedIn() {
+        serverUnavailable = false
         reconnectDelay = 1000L
         ensureConnected()
         notifyChanged()
     }
 
     fun onLoggedOut() {
+        serverUnavailable = false
         if (call != null) endLocal("hangup")
         closeSignaling()
         contacts = emptyList()
@@ -278,7 +294,12 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         if (s !== sig) return
         sig = null
         connected = false
+        serverUnavailable = true
         MessageLog.add(app, "server connection closed: $code $reason")
+        if (call != null) {
+            main.removeCallbacks(connectionLostTimeout)
+            main.postDelayed(connectionLostTimeout, 10_000L)
+        }
         if (code == 4401) { // the token is not valid any more
             authFailed()
             return
@@ -334,6 +355,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     private fun onAuthOk(m: JSONObject) {
         connected = true
+        serverUnavailable = false
+        main.removeCallbacks(connectionLostTimeout)
         reconnectDelay = 1000L
         syncPendingPushToken()
         maybeRefreshFcmToken()
@@ -351,6 +374,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             val local = call
             if (local != null && (local.id.isEmpty() || local.id == id)) {
                 local.id = id
+                pendingInvite = null
                 val newIce = c.optJSONObject("ice")
                 if (newIce != null) {
                     ice = newIce
@@ -368,8 +392,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
         val invite = pendingInvite
         if (invite != null) {
-            pendingInvite = null
-            send(invite)
+            // Keep it until call.created arrives, so a reconnect can safely retry a lost invite.
+            if (!send(invite)) MessageLog.add(app, "CALL", "pending invite send failed; will retry after reconnect")
         }
         val currentCall = call
         if (currentCall != null && currentCall.id.isNotEmpty() && currentCall.videoCapable &&
@@ -379,8 +403,11 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         notifyChanged()
     }
 
-    fun loadContacts() {
-        if (!prefs.loggedIn) return
+    fun loadContacts(onComplete: (() -> Unit)? = null) {
+        if (!prefs.loggedIn) {
+            onComplete?.invoke()
+            return
+        }
         Bg.run({ app.net.contacts() }) { r ->
             r.onSuccess { list ->
                 contacts = list
@@ -390,34 +417,47 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             r.onFailure { e ->
                 if ((e as? ApiException)?.code == "unauthorized") authFailed()
             }
+            onComplete?.invoke()
         }
     }
 
     // ---------- starting and answering calls (from the screens) ----------
 
-    fun startCall(peerId: Long, peerName: String, video: Boolean) {
+    fun startCall(peerId: Long, peerName: String, video: Boolean, fromRecents: Boolean = false) {
         if (state != State.IDLE || !prefs.loggedIn) return
-        val c = CallInfo("", true, peerId, peerName, video)
+        val c = CallInfo("", true, peerId, peerName, video, videoCapable = video || fromRecents)
         call = c
         state = State.OUTGOING
         ringing = false
         lastEndReason = null
+        lastEndAtElapsedRealtime = 0L
         cameraWanted = video
         cameraOn = video
         frontCameraWanted = true
         remoteCameraOn = video
+
+        // A callback from Recents is an ordinary audio-first call, with camera available to enable later.
+        if (serverUnavailable && !connected) {
+            lastEndReason = "server_unavailable"
+            main.removeCallbacks(unavailableCallTimeout)
+            main.postDelayed(unavailableCallTimeout, 2_000L)
+            MessageLog.add(app, "CALL", "call not sent: server is known to be unavailable")
+            notifyChanged()
+            return
+        }
+
         // Start the communication route before local ringback so it follows the selected speaker.
-        startAudio(video)
+        startAudio(video, if (fromRecents) false else null)
         startRingback()
         val invite = JSONObject()
             .put("t", "call.invite")
             .put("to", peerId)
-            .put("media", if (video) "video" else "audio")
+            .put("media", if (c.videoCapable) "video" else "audio")
         startService(c)
+        pendingInvite = invite
         if (connected) {
-            send(invite)
+            if (!send(invite)) ensureConnected()
         } else {
-            pendingInvite = invite
             ensureConnected()
         }
         notifyChanged()
@@ -572,6 +612,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             return
         }
         c.id = id
+        pendingInvite = null
         c.video = cameraOn
         ice = m.optJSONObject("ice")
         if (!cameraOn) send(JSONObject().put("t", "call.signal").put("call", id).put("kind", "camera").put("enabled", false))
@@ -758,7 +799,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     // ---------- audio routing ----------
 
-    private fun startAudio(video: Boolean) {
+    private fun startAudio(video: Boolean, initialSpeaker: Boolean? = null) {
         if (audioStarted) return
         val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         am.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -773,7 +814,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         audioFocus = req
         audioStarted = true
         // Prefer a connected Bluetooth headset. Otherwise start on the phone loudspeaker.
-        speaker = !hasBluetoothHeadset(am)
+        speaker = initialSpeaker ?: !hasBluetoothHeadset(am)
         applySpeaker()
         MessageLog.add(app, "AUDIO", "call route initialized: ${if (speaker) "speaker" else "Bluetooth/earpiece"}")
     }
@@ -881,12 +922,15 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     }
 
     private fun endLocal(reason: String) {
-        val c = call
-        if (c != null) recordHistory(c, reason)
+        val c = call ?: return
+        recordHistory(c, reason)
         MessageLog.add(app, "call ended: $reason")
         lastEndReason = reason
-        lastPeerName = c?.peerName ?: ""
+        lastPeerName = c.peerName
+        lastEndAtElapsedRealtime = SystemClock.elapsedRealtime()
         main.removeCallbacks(expire)
+        main.removeCallbacks(connectionLostTimeout)
+        main.removeCallbacks(unavailableCallTimeout)
         stopRingback()
         Notifications.cancelIncoming(app)
         engine?.close()

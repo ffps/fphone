@@ -33,7 +33,7 @@ import java.util.Locale
 
 /** Call history: who called when, missed calls in red; a tap on the button calls back. */
 @Composable
-fun RecentsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Modifier) {
+fun RecentsTab(onCall: (Long, String, Boolean, Boolean) -> Unit, modifier: Modifier = Modifier) {
     val app = rememberApp()
     val entries = app.history.entries
     val byId = app.calls.contacts.associateBy { it.id }
@@ -82,10 +82,10 @@ fun RecentsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mod
                         )
                     }
                     val tint = if (canCall) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                    IconButton(onClick = { onCall(e.peerId, e.peerName, e.video) }, enabled = canCall) {
+                    IconButton(onClick = { onCall(e.peerId, e.peerName, false, true) }, enabled = canCall) {
                         Icon(
-                            painterResource(if (e.video) R.drawable.ic_videocam else R.drawable.ic_call),
-                            contentDescription = stringResource(if (e.video) R.string.cd_video else R.string.cd_call),
+                            painterResource(R.drawable.ic_call),
+                            contentDescription = stringResource(R.string.cd_call),
                             tint = tint
                         )
                     }
