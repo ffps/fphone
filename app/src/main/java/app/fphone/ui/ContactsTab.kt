@@ -3,6 +3,9 @@
 package app.fphone.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -88,11 +91,16 @@ fun ContactsTab(onCall: (Long, String, Boolean, Boolean) -> Unit, modifier: Modi
     val density = LocalDensity.current
     var pullDistance by remember { mutableFloatStateOf(0f) }
     var refreshing by remember { mutableStateOf(false) }
+    val refreshHandler = remember { Handler(Looper.getMainLooper()) }
     var selectedContact by remember { mutableStateOf<Contact?>(null) }
     fun refreshContacts() {
         if (refreshing) return
         refreshing = true
-        calls.loadContacts { refreshing = false }
+        val startedAt = SystemClock.elapsedRealtime()
+        calls.loadContacts {
+            val remaining = (2000L - (SystemClock.elapsedRealtime() - startedAt)).coerceAtLeast(0L)
+            refreshHandler.postDelayed({ refreshing = false }, remaining)
+        }
     }
     val refreshTransition = rememberInfiniteTransition(label = "contacts-refresh")
     val refreshRotation by refreshTransition.animateFloat(

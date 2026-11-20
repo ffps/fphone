@@ -1,6 +1,7 @@
 package app.fphone
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
@@ -100,7 +101,31 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
 
     fun start(ice: JSONObject, withVideo: Boolean, frontCamera: Boolean = true) {
         ensureInit(ctx)
-        val audioModule = JavaAudioDeviceModule.builder(ctx.applicationContext).createAudioDeviceModule()
+        val voiceAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val audioModule = JavaAudioDeviceModule.builder(ctx.applicationContext)
+            .setAudioAttributes(voiceAttributes)
+            .setAudioRecordErrorCallback(object : JavaAudioDeviceModule.AudioRecordErrorCallback {
+                override fun onWebRtcAudioRecordInitError(errorMessage: String) {
+                    main.post { if (!closed) events.onError("microphone init failed: $errorMessage") }
+                }
+
+                override fun onWebRtcAudioRecordStartError(
+                    errorCode: JavaAudioDeviceModule.AudioRecordStartErrorCode,
+                    errorMessage: String
+                ) {
+                    main.post {
+                        if (!closed) events.onError("microphone start failed ($errorCode): $errorMessage")
+                    }
+                }
+
+                override fun onWebRtcAudioRecordError(errorMessage: String) {
+                    main.post { if (!closed) events.onError("microphone error: $errorMessage") }
+                }
+            })
+            .createAudioDeviceModule()
         adm = audioModule
         val f = PeerConnectionFactory.builder()
             .setAudioDeviceModule(audioModule)
@@ -259,7 +284,8 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
     // ---------- controls ----------
 
     fun setMuted(muted: Boolean) {
-        audioTrack?.setEnabled(!muted)
+        // Mute capture without disabling the track or restarting AudioRecord.
+        adm?.setMicrophoneMute(muted)
     }
 
     fun setVideoEnabled(on: Boolean) {
