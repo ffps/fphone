@@ -93,15 +93,13 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
     private val pendingCandidates = ArrayList<IceCandidate>()
     private var remoteDescriptionSet = false
     private var closed = false
-    private var deferredVideo = false
-    private var deferredFrontCamera = true
 
     val hasLocalVideo: Boolean
         get() = videoTrack != null
 
     // ---------- setup ----------
 
-    fun start(ice: JSONObject, withVideo: Boolean, frontCamera: Boolean = true, deferVideo: Boolean = false) {
+    fun start(ice: JSONObject, withVideo: Boolean, frontCamera: Boolean = true) {
         ensureInit(ctx)
         val voiceAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -149,12 +147,7 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
         audioTrack = track
         p.addTrack(track, listOf("stream0"))
 
-        if (withVideo && deferVideo) {
-            deferredVideo = true
-            deferredFrontCamera = frontCamera
-        } else if (withVideo) {
-            startCamera(f, p, frontCamera)
-        }
+        if (withVideo) startCamera(f, p, frontCamera)
     }
 
     private fun startCamera(f: PeerConnectionFactory, p: PeerConnection, frontCamera: Boolean) {
@@ -250,35 +243,17 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
         val p = pc ?: return
         p.setRemoteDescription(object : SdpAdapter("set remote offer") {
             override fun onSetSuccess() {
-                main.post {
-                    if (closed) return@post
-                    remoteReady()
-
-                    // Add the answerer's camera after the remote offer has created its
-                    // Unified Plan transceivers, but before generating the answer SDP.
-                    if (deferredVideo) {
-                        deferredVideo = false
-                        val f = factory
-                        if (f != null) {
-                            try {
-                                startCamera(f, p, deferredFrontCamera)
-                            } catch (t: Throwable) {
-                                events.onError("cannot start camera: $t")
+                main.post { remoteReady() }
+                p.createAnswer(object : SdpAdapter("create answer") {
+                    override fun onCreateSuccess(answer: SessionDescription?) {
+                        if (answer == null) return
+                        p.setLocalDescription(object : SdpAdapter("set local answer") {
+                            override fun onSetSuccess() {
+                                main.post { if (!closed) onAnswer(answer.description) }
                             }
-                        }
+                        }, answer)
                     }
-
-                    p.createAnswer(object : SdpAdapter("create answer") {
-                        override fun onCreateSuccess(answer: SessionDescription?) {
-                            if (answer == null) return
-                            p.setLocalDescription(object : SdpAdapter("set local answer") {
-                                override fun onSetSuccess() {
-                                    main.post { if (!closed) onAnswer(answer.description) }
-                                }
-                            }, answer)
-                        }
-                    }, MediaConstraints())
-                }
+                }, MediaConstraints())
             }
         }, SessionDescription(SessionDescription.Type.OFFER, sdp))
     }
