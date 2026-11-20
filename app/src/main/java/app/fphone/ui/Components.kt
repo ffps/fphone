@@ -144,7 +144,6 @@ fun SectionTitle(text: String) {
 /** Installed version, "Check for updates" and "Update" buttons (login screen and settings). */
 @Composable
 fun UpdateSection(onUpdate: () -> Unit) {
-    val ctx = LocalContext.current
     val u = rememberApp().updater
     val status = when (u.kind) {
         Updater.Kind.IDLE -> ""
@@ -175,7 +174,6 @@ fun UpdateSection(onUpdate: () -> Unit) {
             }
             when (u.kind) {
                 Updater.Kind.AVAILABLE -> Button(onClick = onUpdate) { Text(stringResource(R.string.btn_update)) }
-                Updater.Kind.READY -> Button(onClick = { u.install(ctx) }) { Text(stringResource(R.string.btn_install)) }
                 else -> {}
             }
         }

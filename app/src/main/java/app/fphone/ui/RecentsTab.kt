@@ -82,9 +82,9 @@ fun RecentsTab(onCall: (Long, String, Boolean, Boolean) -> Unit, modifier: Modif
                         )
                     }
                     val tint = if (canCall) MaterialTheme.colorScheme.primary else LocalContentColor.current
-                    IconButton(onClick = { onCall(e.peerId, e.peerName, false, true) }, enabled = canCall) {
+                    IconButton(onClick = { onCall(e.peerId, e.peerName, e.video, true) }, enabled = canCall) {
                         Icon(
-                            painterResource(R.drawable.ic_call),
+                            painterResource(if (e.video) R.drawable.ic_videocam else R.drawable.ic_call),
                             contentDescription = stringResource(R.string.cd_call),
                             tint = tint
                         )
