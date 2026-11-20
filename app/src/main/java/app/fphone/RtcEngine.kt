@@ -1,7 +1,6 @@
 package app.fphone
 
 import android.content.Context
-import android.media.AudioAttributes
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
@@ -101,13 +100,7 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
 
     fun start(ice: JSONObject, withVideo: Boolean, frontCamera: Boolean = true) {
         ensureInit(ctx)
-        val voiceAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-            .build()
-        val audioModule = JavaAudioDeviceModule.builder(ctx.applicationContext)
-            .setAudioAttributes(voiceAttributes)
-            .createAudioDeviceModule()
+        val audioModule = JavaAudioDeviceModule.builder(ctx.applicationContext).createAudioDeviceModule()
         adm = audioModule
         val f = PeerConnectionFactory.builder()
             .setAudioDeviceModule(audioModule)

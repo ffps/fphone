@@ -98,11 +98,7 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
     var sawCall by remember { mutableStateOf(false) }
     LaunchedEffect(st) {
         if (st == CallManager.State.IDLE) {
-            if (sawCall) delay(when (calls.lastEndReason) {
-                "busy", "already_in_call" -> 0L // CallManager keeps this result visible for two seconds.
-                "server_unavailable" -> 2200L
-                else -> 1500L
-            })
+            if (sawCall) delay(if (calls.lastEndReason in setOf("busy", "already_in_call")) 2200 else 1500)
             onFinish()
         } else sawCall = true
     }
@@ -126,8 +122,7 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
 
     val status = when (st) {
         CallManager.State.INCOMING -> stringResource(if (videoCall) R.string.call_incoming_video else R.string.call_incoming_audio)
-        CallManager.State.OUTGOING -> if (calls.lastEndReason != null) Texts.reason(ctx, calls.lastEndReason)
-            else stringResource(if (calls.ringing) R.string.call_ringing else R.string.call_calling)
+        CallManager.State.OUTGOING -> stringResource(if (calls.ringing) R.string.call_ringing else R.string.call_calling)
         CallManager.State.CONNECTING -> stringResource(R.string.call_connecting)
         CallManager.State.ACTIVE -> "%d:%02d".format(seconds / 60, seconds % 60)
         CallManager.State.IDLE -> Texts.reason(ctx, calls.lastEndReason)

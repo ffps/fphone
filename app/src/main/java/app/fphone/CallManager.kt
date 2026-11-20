@@ -1,9 +1,6 @@
 package app.fphone
 
 import android.content.Context
-import android.content.BroadcastReceiver
-import android.content.Intent
-import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -96,7 +93,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private var restarts = 0
     private var audioStarted = false
     private var audioFocus: AudioFocusRequest? = null
-    private var scoReceiver: BroadcastReceiver? = null
     private var ringback: ToneGenerator? = null
     private var frontCameraWanted = true
     private var pushSyncing = false
@@ -108,18 +104,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     }
     private val expire = Runnable {
         if (call != null && state == State.INCOMING) endLocal("no_answer")
-    }
-    private val finishBusy = Runnable {
-        val reason = lastEndReason
-        if (call != null && state == State.OUTGOING && (reason == "busy" || reason == "already_in_call")) endLocal(reason)
-    }
-    private val serverUnavailable = Runnable {
-        if (call != null && state == State.OUTGOING && (!connected || pendingInvite != null)) {
-            pendingInvite = null
-            lastEndReason = "server_unavailable"
-            notifyChanged()
-            endLocal("server_unavailable")
-        }
     }
     private val clearReject = Runnable {
         pendingRejectId = null
@@ -295,12 +279,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         sig = null
         connected = false
         MessageLog.add(app, "server connection closed: $code $reason")
-        if (state == State.OUTGOING && lastEndReason != "busy" && lastEndReason != "already_in_call") {
-            lastEndReason = "server_unavailable"
-            stopRingback()
-            notifyChanged()
-            scheduleServerUnavailable()
-        }
         if (code == 4401) { // the token is not valid any more
             authFailed()
             return
@@ -356,8 +334,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     private fun onAuthOk(m: JSONObject) {
         connected = true
-        main.removeCallbacks(serverUnavailable)
-        if (state == State.OUTGOING && pendingInvite != null) lastEndReason = null
         reconnectDelay = 1000L
         syncPendingPushToken()
         maybeRefreshFcmToken()
@@ -393,13 +369,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         val invite = pendingInvite
         if (invite != null) {
             pendingInvite = null
-            if (!send(invite)) {
-                pendingInvite = invite
-                lastEndReason = "server_unavailable"
-                scheduleServerUnavailable()
-            } else {
-                startRingback()
-            }
+            send(invite)
         }
         val currentCall = call
         if (currentCall != null && currentCall.id.isNotEmpty() && currentCall.videoCapable &&
@@ -427,8 +397,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     fun startCall(peerId: Long, peerName: String, video: Boolean) {
         if (state != State.IDLE || !prefs.loggedIn) return
-        // Every outgoing call is video-capable. The argument controls only the initial camera state.
-        val c = CallInfo("", true, peerId, peerName, video, true)
+        val c = CallInfo("", true, peerId, peerName, video)
         call = c
         state = State.OUTGOING
         ringing = false
@@ -436,20 +405,20 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         cameraWanted = video
         cameraOn = video
         frontCameraWanted = true
-        remoteCameraOn = false
-        startAudio()
+        remoteCameraOn = video
+        // Start the communication route before local ringback so it follows the selected speaker.
+        startAudio(video)
+        startRingback()
         val invite = JSONObject()
             .put("t", "call.invite")
             .put("to", peerId)
-            .put("media", "video")
+            .put("media", if (video) "video" else "audio")
         startService(c)
-        if (!connected || !send(invite)) {
-            pendingInvite = invite
-            lastEndReason = "server_unavailable"
-            ensureConnected()
-            scheduleServerUnavailable()
+        if (connected) {
+            send(invite)
         } else {
-            startRingback()
+            pendingInvite = invite
+            ensureConnected()
         }
         notifyChanged()
     }
@@ -682,12 +651,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private fun onEnded(m: JSONObject) {
         val c = call ?: return
         if (m.optString("call") != c.id) return
-        val reason = m.optString("reason", "hangup")
-        if (reason == "busy" || reason == "already_in_call") {
-            showBusyForTwoSeconds(reason)
-        } else {
-            endLocal(reason)
-        }
+        endLocal(m.optString("reason", "hangup"))
     }
 
     private fun onIce(m: JSONObject) {
@@ -702,9 +666,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         val code = m.optString("code")
         val ref = m.optString("ref")
         MessageLog.add(app, "server error: $code ($ref)")
-        if (ref == "call.invite" && state == State.OUTGOING) {
-            if (code == "busy" || code == "already_in_call") showBusyForTwoSeconds(code) else endLocal(code)
-        }
+        if (ref == "call.invite" && state == State.OUTGOING) endLocal(code)
     }
 
     private fun sendSignal(kind: String, sdp: String, restart: Boolean) {
@@ -723,7 +685,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private fun startEngine() {
         val c = call ?: return
         if (engine != null) return
-        startAudio()
+        startAudio(c.video)
         val e = RtcEngine(app, this)
         engine = e
         try {
@@ -796,22 +758,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     // ---------- audio routing ----------
 
-    private fun scheduleServerUnavailable() {
-        main.removeCallbacks(serverUnavailable)
-        main.postDelayed(serverUnavailable, 2000L)
-    }
-
-    private fun showBusyForTwoSeconds(reason: String = "busy") {
-        if (state != State.OUTGOING || call == null) return
-        main.removeCallbacks(serverUnavailable)
-        main.removeCallbacks(finishBusy)
-        lastEndReason = reason
-        stopRingback()
-        notifyChanged()
-        main.postDelayed(finishBusy, 2000L)
-    }
-
-    private fun startAudio() {
+    private fun startAudio(video: Boolean) {
         if (audioStarted) return
         val am = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         am.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -825,35 +772,10 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         am.requestAudioFocus(req)
         audioFocus = req
         audioStarted = true
-        // Speakerphone is opt-in. Prefer Bluetooth when available, otherwise the earpiece.
-        speaker = false
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            val receiver = object : BroadcastReceiver() {
-                override fun onReceive(context: Context?, intent: Intent?) {
-                    if (intent?.action != AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED) return
-                    val scoState = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_ERROR)
-                    if (scoState == AudioManager.SCO_AUDIO_STATE_CONNECTED && audioStarted && !speaker) {
-                        @Suppress("DEPRECATION")
-                        am.isBluetoothScoOn = true
-                        MessageLog.add(app, "AUDIO", "Bluetooth SCO connected")
-                    } else if (scoState == AudioManager.SCO_AUDIO_STATE_DISCONNECTED && audioStarted) {
-                        MessageLog.add(app, "AUDIO", "Bluetooth SCO disconnected")
-                    }
-                }
-            }
-            scoReceiver = receiver
-            try {
-                androidx.core.content.ContextCompat.registerReceiver(
-                    app, receiver, IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED),
-                    androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
-                )
-            } catch (e: Exception) {
-                scoReceiver = null
-                MessageLog.add(app, "AUDIO", "cannot register Bluetooth SCO receiver: $e")
-            }
-        }
+        // Prefer a connected Bluetooth headset. Otherwise start on the phone loudspeaker.
+        speaker = !hasBluetoothHeadset(am)
         applySpeaker()
-        MessageLog.add(app, "AUDIO", "call route initialized: ${if (hasBluetoothHeadset(am)) "Bluetooth/earpiece" else "earpiece"}")
+        MessageLog.add(app, "AUDIO", "call route initialized: ${if (speaker) "speaker" else "Bluetooth/earpiece"}")
     }
 
     private fun bluetoothCommunicationDevice(am: AudioManager): AudioDeviceInfo? {
@@ -879,16 +801,12 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             } else {
                 bluetoothCommunicationDevice(am) ?: am.availableCommunicationDevices.firstOrNull {
                     it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
-                } ?: am.availableCommunicationDevices.firstOrNull {
-                    it.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
                 }
             }
             if (target != null) {
-                val selected = am.setCommunicationDevice(target)
-                MessageLog.add(app, "AUDIO", "communication device selected=${target.type}, success=$selected")
+                am.setCommunicationDevice(target)
             } else {
                 am.clearCommunicationDevice()
-                MessageLog.add(app, "AUDIO", "no non-speaker communication device available")
             }
         } else {
             @Suppress("DEPRECATION")
@@ -896,6 +814,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                 if (!speaker && hasBluetoothHeadset(am)) {
                     am.isSpeakerphoneOn = false
                     am.startBluetoothSco()
+                    am.isBluetoothScoOn = true
                 } else {
                     am.stopBluetoothSco()
                     am.isBluetoothScoOn = false
@@ -919,10 +838,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                 am.isSpeakerphoneOn = false
             }
         }
-        scoReceiver?.let {
-            try { app.unregisterReceiver(it) } catch (_: Exception) { }
-        }
-        scoReceiver = null
         audioFocus?.let { am.abandonAudioFocusRequest(it) }
         audioFocus = null
         am.mode = AudioManager.MODE_NORMAL
@@ -972,8 +887,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         lastEndReason = reason
         lastPeerName = c?.peerName ?: ""
         main.removeCallbacks(expire)
-        main.removeCallbacks(finishBusy)
-        main.removeCallbacks(serverUnavailable)
         stopRingback()
         Notifications.cancelIncoming(app)
         engine?.close()

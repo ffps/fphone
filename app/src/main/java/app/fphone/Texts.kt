@@ -13,7 +13,6 @@ object Texts {
             "no_answer" -> R.string.reason_no_answer
             "busy" -> R.string.reason_busy
             "offline" -> R.string.reason_offline
-            "server_unavailable" -> R.string.reason_server_unavailable
             "timeout" -> R.string.reason_timeout
             "answered_elsewhere" -> R.string.reason_answered_elsewhere
             "gone" -> R.string.reason_gone

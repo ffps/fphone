@@ -39,12 +39,6 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -131,9 +125,9 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                     onDragCancel = { emptyPull = 0f }
                 )
             },
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.TopCenter
         ) {
-            if (refreshing) RefreshIndicator()
+            if (refreshing) Icon(painterResource(R.drawable.ic_refresh), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp).size(24.dp))
         }
     } else {
         val finishDrag: () -> Unit = {
@@ -196,36 +190,13 @@ fun ContactsTab(onCall: (Long, String, Boolean) -> Unit, modifier: Modifier = Mo
                 }
             }
         }
-        if (refreshing) RefreshIndicator(Modifier.align(Alignment.Center))
+        if (refreshing) Icon(painterResource(R.drawable.ic_refresh), contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp).size(24.dp))
         }
     }
     selectedContact?.let { c ->
         ContactDetailsDialog(c, online = c.online || c.id in calls.online, canCall = calls.state == CallManager.State.IDLE && (c.reachable || c.id in calls.online),
             onDismiss = { selectedContact = null }, onCall = { selectedContact = null; onCall(c.id,c.name,true) })
     }
-}
-
-@Composable
-private fun RefreshIndicator(modifier: Modifier = Modifier) {
-    val transition = rememberInfiniteTransition(label = "contacts-refresh")
-    val angle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "refresh-rotation"
-    )
-    Icon(
-        painterResource(R.drawable.ic_refresh),
-        contentDescription = null,
-        tint = MaterialTheme.colorScheme.primary,
-        modifier = modifier.size(48.dp).graphicsLayer {
-            rotationZ = angle
-            alpha = 0.55f
-        }
-    )
 }
 
 @Composable
