@@ -14,18 +14,19 @@ import (
 )
 
 type Config struct {
-	Listen         string      `yaml:"listen"`
-	ControlPort    int         `yaml:"control_port"`
-	DataDir        string      `yaml:"data_dir"`
-	PublicHost     string      `yaml:"public_host"`
-	AllowedOrigins []string    `yaml:"allowed_origins"`
-	TestPage       bool        `yaml:"test_page"`
-	TLS            TLSConfig   `yaml:"tls"`
-	Log            LogConfig   `yaml:"log"`
-	Auth           AuthConfig  `yaml:"auth"`
-	Turn           TurnConfig  `yaml:"turn"`
-	Calls          CallsConfig `yaml:"calls"`
-	FCM            FCMConfig   `yaml:"fcm"`
+	Listen             string      `yaml:"listen"`
+	ControlPort        int         `yaml:"control_port"`
+	DataDir            string      `yaml:"data_dir"`
+	PublicHost         string      `yaml:"public_host"`
+	AllowedOrigins     []string    `yaml:"allowed_origins"`
+	StaticCacheSeconds int         `yaml:"static_cache_seconds"`
+	LegacyTestPage     bool        `yaml:"test_page"` // accepted for old configs; /test is no longer served
+	TLS                TLSConfig   `yaml:"tls"`
+	Log                LogConfig   `yaml:"log"`
+	Auth               AuthConfig  `yaml:"auth"`
+	Turn               TurnConfig  `yaml:"turn"`
+	Calls              CallsConfig `yaml:"calls"`
+	FCM                FCMConfig   `yaml:"fcm"`
 }
 
 type TLSConfig struct {
@@ -130,6 +131,9 @@ func resolvePath(base, p string) string {
 func (c *Config) validate() error {
 	if c.DataDir == "" {
 		return errors.New("data_dir must not be empty")
+	}
+	if c.StaticCacheSeconds < 0 {
+		return errors.New("static_cache_seconds must be >= 0")
 	}
 	if c.ControlPort < 1 || c.ControlPort > 65535 {
 		return errors.New("control_port must be between 1 and 65535")

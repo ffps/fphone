@@ -22,8 +22,9 @@ public_host: "domain.com"
 #   allowed_origins: ["https://domain.com"]
 allowed_origins: ["*"]
 
-# Test page at /test (login, contacts, calls). Turn it off after testing.
-test_page: false
+# Public static files are served from data_dir/web (for example web/pwa/index.html).
+# Cache lifetime in seconds; 0 disables browser caching.
+static_cache_seconds: 0
 
 tls:
   mode: "off"        # off | self-signed | files

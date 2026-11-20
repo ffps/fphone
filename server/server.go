@@ -2,22 +2,20 @@ package main
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"image/jpeg"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
-
-//go:embed test.html
-var testHTML []byte
 
 type Server struct {
 	cfg       *Config
@@ -45,10 +43,6 @@ func NewServer(cfg *Config, store *Store, hub *Hub) (*Server, error) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte("fphone\n"))
-	})
 	mux.HandleFunc("GET /api/v1/ping", s.rest(s.handlePing))
 	mux.HandleFunc("POST /api/v1/login", s.rest(s.handleLogin))
 	mux.HandleFunc("POST /api/v1/logout", s.authed(s.handleLogout))
@@ -60,14 +54,116 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/me/avatar", s.authed(s.handleUploadAvatar))
 	mux.HandleFunc("DELETE /api/v1/me/avatar", s.authed(s.handleDeleteAvatar))
 	mux.HandleFunc("GET /ws", s.hub.ServeWS)
-	if s.cfg.TestPage {
-		mux.HandleFunc("GET /test", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-store")
-			w.Write(testHTML)
-		})
-	}
+	mux.HandleFunc("/", s.serveStatic)
 	return mux
+}
+
+// serveStatic serves public files from data_dir/web. API paths are never
+// treated as static files, even when an API route does not exist.
+func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rel := strings.Trim(r.URL.Path, "/")
+	if rel == "" {
+		rel = "index.html"
+	}
+	// Reject traversal and malformed paths before joining with the web root.
+	if !fs.ValidPath(rel) || strings.Contains(rel, `\`) {
+		http.NotFound(w, r)
+		return
+	}
+	webRoot := filepath.Join(s.cfg.DataDir, "web")
+	root, err := os.OpenRoot(webRoot)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close()
+
+	f, err := root.Open(rel)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		http.NotFound(w, r)
+		return
+	}
+	if info.IsDir() {
+		f.Close()
+		if !strings.HasSuffix(r.URL.Path, "/") {
+			location := r.URL.EscapedPath() + "/"
+			if r.URL.RawQuery != "" {
+				location += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, location, http.StatusMovedPermanently)
+			return
+		}
+		rel = path.Join(rel, "index.html")
+		f, err = root.Open(rel)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		info, err = f.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			f.Close()
+			http.NotFound(w, r)
+			return
+		}
+	} else if !info.Mode().IsRegular() {
+		f.Close()
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fullPath := rel
+
+	contentType := staticContentType(fullPath)
+	w.Header().Set("Content-Type", contentType)
+	if s.cfg.StaticCacheSeconds == 0 {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(s.cfg.StaticCacheSeconds))
+	}
+	http.ServeContent(w, r, path.Base(fullPath), info.ModTime(), f)
+}
+
+func staticContentType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js":
+		return "application/javascript; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".txt":
+		return "text/plain; charset=utf-8"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".svg":
+		return "image/svg+xml"
+	case ".ico":
+		return "image/x-icon"
+	case ".webmanifest":
+		return "application/manifest+json"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // ---------- helpers ----------
