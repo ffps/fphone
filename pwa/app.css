@@ -224,8 +224,8 @@ input:focus {
   background: #3b9b61;
 }
 .call-button {
-  width: 46px;
-  height: 46px;
+  width: 40px;
+  height: 40px;
   flex: none;
   border: 0;
   border-radius: 50%;
@@ -235,8 +235,8 @@ input:focus {
   place-items: center;
 }
 .call-button svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   fill: currentColor;
 }
 .empty {
@@ -480,8 +480,8 @@ input:focus {
 }
 
 .history-call {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: grid;
   place-items: center;
@@ -491,8 +491,8 @@ input:focus {
   color: #fff;
 }
 .history-call svg {
-  width: 21px;
-  height: 21px;
+  width: 20px;
+  height: 20px;
   fill: currentColor;
 }
 
