@@ -251,7 +251,9 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     }
 
     private fun logout() {
-        Bg.run({ app.net.logout() }) { }
+        // Keep the token for the background logout request before clearing the session.
+        val token = app.prefs.sessionToken
+        Bg.run({ app.net.logout(token) }) { }
         app.prefs.clearSession()
         app.calls.onLoggedOut()
     }

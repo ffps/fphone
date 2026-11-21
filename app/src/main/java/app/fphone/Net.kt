@@ -84,9 +84,15 @@ class Net(private val prefs: Prefs) {
     fun wsUrl(): String =
         prefs.server.trimEnd('/').replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "/ws"
 
-    private fun request(method: String, path: String, body: JSONObject?, auth: Boolean): JSONObject {
+    private fun request(
+        method: String,
+        path: String,
+        body: JSONObject?,
+        auth: Boolean,
+        authToken: String? = null
+    ): JSONObject {
         val rb = Request.Builder().url(prefs.server.trimEnd('/') + "/api/v1" + path)
-        if (auth) rb.header("Authorization", "Bearer " + prefs.sessionToken)
+        if (auth) rb.header("Authorization", "Bearer " + (authToken ?: prefs.sessionToken))
         val json = "application/json; charset=utf-8".toMediaType()
         when (method) {
             "POST" -> rb.post((body ?: JSONObject()).toString().toRequestBody(json))
@@ -130,8 +136,8 @@ class Net(private val prefs: Prefs) {
         return request("POST", "/login", body, false)
     }
 
-    fun logout() {
-        request("POST", "/logout", null, true)
+    fun logout(token: String) {
+        request("POST", "/logout", null, true, token)
     }
 
     fun putPushToken(fcmToken: String) {
