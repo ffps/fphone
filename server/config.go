@@ -14,19 +14,20 @@ import (
 )
 
 type Config struct {
-	Listen             string      `yaml:"listen"`
-	ControlPort        int         `yaml:"control_port"`
-	DataDir            string      `yaml:"data_dir"`
-	PublicHost         string      `yaml:"public_host"`
-	AllowedOrigins     []string    `yaml:"allowed_origins"`
-	StaticCacheSeconds int         `yaml:"static_cache_seconds"`
-	LegacyTestPage     bool        `yaml:"test_page"` // accepted for old configs; /test is no longer served
-	TLS                TLSConfig   `yaml:"tls"`
-	Log                LogConfig   `yaml:"log"`
-	Auth               AuthConfig  `yaml:"auth"`
-	Turn               TurnConfig  `yaml:"turn"`
-	Calls              CallsConfig `yaml:"calls"`
-	FCM                FCMConfig   `yaml:"fcm"`
+	Listen             string        `yaml:"listen"`
+	ControlPort        int           `yaml:"control_port"`
+	DataDir            string        `yaml:"data_dir"`
+	PublicHost         string        `yaml:"public_host"`
+	AllowedOrigins     []string      `yaml:"allowed_origins"`
+	StaticCacheSeconds int           `yaml:"static_cache_seconds"`
+	LegacyTestPage     bool          `yaml:"test_page"` // accepted for old configs; /test is no longer served
+	TLS                TLSConfig     `yaml:"tls"`
+	Log                LogConfig     `yaml:"log"`
+	Auth               AuthConfig    `yaml:"auth"`
+	Turn               TurnConfig    `yaml:"turn"`
+	Calls              CallsConfig   `yaml:"calls"`
+	FCM                FCMConfig     `yaml:"fcm"`
+	WebPush            WebPushConfig `yaml:"web_push"`
 }
 
 type TLSConfig struct {
@@ -163,6 +164,9 @@ func (c *Config) validate() error {
 	}
 	if c.Calls.RingTimeoutSeconds < 5 || c.Calls.ReconnectGraceSeconds < 5 || c.Calls.MaxActive < 1 {
 		return errors.New("calls: ring_timeout_seconds and reconnect_grace_seconds must be >= 5, max_active must be >= 1")
+	}
+	if (c.WebPush.PublicKey == "") != (c.WebPush.PrivateKey == "") {
+		return errors.New("web_push.public_key and web_push.private_key must be set together")
 	}
 	if c.Turn.Enabled {
 		if c.PublicHost == "" {

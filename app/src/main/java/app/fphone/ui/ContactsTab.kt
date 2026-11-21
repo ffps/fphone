@@ -16,6 +16,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -54,7 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -64,7 +64,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import app.fphone.CallManager
 import app.fphone.Contact
-import app.fphone.ContactLastCall
 import app.fphone.R
 
 /** The saved order first, new contacts (alphabetical, as the server sends them) at the end. */
@@ -267,21 +266,6 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
                 Text("@${c.login}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
                 Text(if (online) "Сейчас в сети" else lastSeenText(c.lastSeen), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val last = c.lastCall
-                if (last != null) {
-                    Spacer(Modifier.height(18.dp))
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        val missed = last.result == "missed"
-                        val icon = when { missed -> R.drawable.ic_call_missed; last.outgoing -> R.drawable.ic_call_made; else -> R.drawable.ic_call_received }
-                        val tint = when { missed -> Color(0xFFD32F2F); last.outgoing -> Color(0xFF2E7D32); else -> Color(0xFF1976D2) }
-                        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(lastCallLabel(last), style = MaterialTheme.typography.bodyMedium)
-                            Text(formatLastCallTime(last.ts), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
                 Spacer(Modifier.height(20.dp))
                 Button(onClick = onCall, enabled = canCall, modifier = Modifier.fillMaxWidth()) {
                     Icon(painterResource(R.drawable.ic_call), contentDescription = null)
@@ -292,25 +276,6 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
         }
     }
 }
-
-private fun lastCallLabel(c: ContactLastCall): String = when (c.result) {
-    "missed" -> "Пропущенный"
-    "declined", "rejected" -> "Отклонённый"
-    "cancelled" -> "Отменён"
-    "elsewhere" -> "Ответили на другом устройстве"
-    "busy" -> "Занято"
-    "no_answer" -> if (c.outgoing) "Нет ответа" else "Пропущенный"
-    "offline" -> "Недоступен"
-    "answered", "hangup" -> if (c.outgoing) "Исходящий" else "Входящий"
-    else -> if (c.outgoing) "Исходящий" else "Входящий"
-}
-
-private fun formatLastCallTime(ts: Long): String {
-    if (ts <= 0L) return ""
-    val date = Date(ts * 1000L)
-    return SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()).format(date)
-}
-
 
 private fun lastSeenText(timestamp: Long): String {
     if (timestamp <= 0L) return "давно не был в сети"

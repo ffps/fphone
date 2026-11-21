@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// The version is set at build time: go build -ldflags "-X main.version=0.3.0"
-var version = "0.3.0"
+// The version is set at build time: go build -ldflags "-X main.version=0.3.17"
+var version = "0.3.17"
 
 //go:embed fphone.example.yaml
 var exampleConfig []byte
@@ -37,6 +37,7 @@ Usage: fphone [-c fphone.yaml] <command>
   fingerprint                  show the certificate fingerprint to pin in the client
   push-test [-validate-only] [TOKEN|id=ID|login=LOGIN] [title=TITLE] [text=TEXT]
                                send a test push to a token, device, or all devices of a user
+  generate-vapid               generate a Web Push VAPID key pair
   example-config               print an example config
   version                      print the version
 
@@ -57,6 +58,17 @@ func main() {
 	switch args[0] {
 	case "version":
 		fmt.Println(version)
+		return
+	case "generate-vapid":
+		publicKey, privateKey, err := GenerateVAPIDKeys()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println("web_push:")
+		fmt.Printf("  public_key: %q\n", publicKey)
+		fmt.Printf("  private_key: %q\n", privateKey)
+		fmt.Println("  subject: \"mailto:admin@example.com\"")
 		return
 	case "example-config":
 		os.Stdout.Write(exampleConfig)
@@ -135,16 +147,27 @@ func cmdServe(cfg *Config) error {
 		slog.Warn("TURN is disabled: calls will work only when both phones can reach each other directly")
 	}
 
+	var fcm *FCM
 	if cfg.FCM.CredentialsFile != "" {
-		push, err := NewFCM(cfg)
+		fcm, err = NewFCM(cfg)
 		if err != nil {
 			return err
 		}
-		calls.SetPush(push)
-		slog.Info("push (FCM) enabled", "project", push.project, "send_caller_name", push.sendName)
+		slog.Info("push (FCM) enabled", "project", fcm.project, "send_caller_name", fcm.sendName)
 	} else {
-		slog.Warn("push (FCM) is disabled: phones that are not connected cannot be woken up for incoming calls")
+		slog.Warn("push (FCM) is disabled")
 	}
+	var webPush *WebPush
+	if cfg.WebPush.PublicKey != "" {
+		webPush, err = NewWebPush(cfg.WebPush)
+		if err != nil {
+			return err
+		}
+		slog.Info("push (Web Push) enabled")
+	} else {
+		slog.Warn("push (Web Push) is disabled")
+	}
+	calls.SetPush(fcm, webPush)
 
 	srv, err := NewServer(cfg, store, hub)
 	if err != nil {

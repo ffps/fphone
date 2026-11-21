@@ -30,11 +30,20 @@
         <button id="settings-open" class="icon-button" aria-label="Настройки">⋮</button>
       </header>
       <div id="connection-state" class="connection">Подключение…</div>
+      <nav class="main-tabs" aria-label="Разделы">
+        <button id="tab-contacts" class="tab-button selected" type="button">Контакты</button>
+        <button id="tab-history" class="tab-button" type="button">Недавние</button>
+      </nav>
       <div id="contacts-view" class="view">
         <div class="view-heading"><h2>Контакты</h2><button id="refresh-contacts" class="text-button">Обновить</button></div>
         <div id="contacts-list" class="contact-list"></div>
         <p id="contacts-empty" class="muted empty hidden">Контактов пока нет</p>
       </div>
+      <section id="history-view" class="view hidden">
+        <div class="view-heading"><h2>Недавние</h2><button id="clear-history" class="text-button">Очистить</button></div>
+        <div id="history-list" class="history-list"></div>
+        <p id="history-empty" class="muted empty">История звонков пока пуста</p>
+      </section>
       <section id="settings-view" class="view hidden">
         <div class="view-heading"><h2>Настройки</h2><button id="settings-close" class="text-button">Готово</button></div>
         <div class="panel profile-panel">
@@ -44,6 +53,11 @@
           <label>Имя<input id="my-name" maxlength="64"></label>
           <button id="save-profile" class="primary">Сохранить</button>
           <p id="profile-error" class="error" role="alert"></p>
+          <div class="push-settings">
+            <p id="push-status" class="muted">Уведомления не настроены</p>
+            <button id="push-enable" class="primary" type="button">Включить уведомления</button>
+            <button id="push-disable" class="text-button hidden" type="button">Отключить уведомления</button>
+          </div>
         </div>
         <button id="logout" class="danger-button">Выйти из аккаунта</button>
       </section>

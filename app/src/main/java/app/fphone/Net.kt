@@ -22,8 +22,7 @@ import javax.net.ssl.X509TrustManager
 /** Error from the server (code from the JSON error body) or a local network problem. */
 class ApiException(val code: String, val status: Int = 0) : Exception(code)
 
-data class ContactLastCall(val ts: Long, val outgoing: Boolean, val video: Boolean, val result: String, val durationSec: Int)
-data class Contact(val id: Long, val login: String, val name: String, val online: Boolean, val reachable: Boolean, val avatar: Long, val lastSeen: Long, val lastCall: ContactLastCall?)
+data class Contact(val id: Long, val login: String, val name: String, val online: Boolean, val reachable: Boolean, val avatar: Long, val lastSeen: Long)
 
 /** Runs blocking work on a background thread and delivers the result on the main thread. */
 object Bg {
@@ -200,13 +199,11 @@ class Net(private val prefs: Prefs) {
         val out = ArrayList<Contact>()
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
-            val lc = o.optJSONObject("last_call")
             out.add(
                 Contact(
                     o.getLong("id"), o.optString("login"), o.optString("name"), o.optBoolean("online"),
                     o.optBoolean("reachable", o.optBoolean("online")), o.optLong("avatar", 0L),
-                    o.optLong("last_seen", 0L),
-                    if (lc == null) null else ContactLastCall(lc.optLong("ts"),lc.optBoolean("outgoing"),lc.optBoolean("video"),lc.optString("result"),lc.optInt("duration_sec"))
+                    o.optLong("last_seen", 0L)
                 )
             )
         }

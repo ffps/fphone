@@ -12,7 +12,8 @@ const state = {
   deviceId: localStorage.getItem('kukukha.device') || makeId(),
   user: null, contacts: [], online: new Set(), ws: null, reconnectTimer: 0,
   call: null, pc: null, localStream: null, remoteStream: null,
-  pendingCandidates: [], muted: false, cameraOn: false, selectedAvatar: null
+  pendingCandidates: [], muted: false, cameraOn: false, selectedAvatar: null,
+  wakeCall: new URLSearchParams(location.search).get('wake') || ''
 };
 localStorage.setItem('kukukha.device', state.deviceId);
 
@@ -32,6 +33,7 @@ function setConnection(text, kind = '') {
   $('connection-state').textContent = text;
   $('connection-state').className = 'connection ' + kind;
 }
+// Send an authenticated API request.
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set('Authorization', 'Bearer ' + state.token);
@@ -88,14 +90,187 @@ function loginError(code) {
 function enterApp() {
   hide('login-screen'); show('main-screen');
   $('top-title').textContent = 'Контакты';
-  loadProfile(); loadContacts(); connectSocket();
+  loadProfile(); loadContacts(); connectSocket(); renderHistory(); updatePushStatus(); syncExistingPushSubscription(); syncPendingPushHistory();
 }
+
+// Keep each account's call history on this browser only.
+function historyKey() {
+  return 'kukukha.history.' + (state.user?.id || 'unknown');
+}
+function loadHistory() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(historyKey()) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch (_) {
+    return [];
+  }
+}
+// Read calls received by the Service Worker while this page was closed.
+async function syncPendingPushHistory() {
+  if (!state.user?.id || !('indexedDB' in window)) return;
+  try {
+    const db = await openPendingPushDB();
+    const pending = await new Promise((resolve, reject) => {
+      const request = db.transaction('pending').objectStore('pending').getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+    const rows = loadHistory();
+    let changed = false;
+    for (const item of pending) {
+      if (item.cancelled || Number(item.to_id) !== Number(state.user.id)) {
+        await deletePendingPush(db, item.call);
+        changed = true;
+        continue;
+      }
+      if (Number(item.exp) * 1000 > Date.now()) continue;
+      if (!rows.some(row => row.id === item.call)) {
+        rows.unshift({
+          id: item.call,
+          peerId: Number(item.from_id) || 0,
+          peerName: item.from_name || 'Абонент',
+          peerLogin: '',
+          outgoing: false,
+          media: item.media || 'audio',
+          reason: 'no_answer',
+          startedAt: Number(item.started_at || item.exp) * 1000,
+          endedAt: Date.now(),
+          duration: 0
+        });
+        changed = true;
+      }
+      await deletePendingPush(db, item.call);
+    }
+    db.close();
+    if (changed) {
+      localStorage.setItem(historyKey(), JSON.stringify(rows.slice(0, 100)));
+      renderHistory();
+      renderContacts();
+    }
+  } catch (error) {
+    console.warn('Pending push history:', error);
+  }
+}
+function openPendingPushDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('kukukha-push', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('pending', {keyPath: 'call'});
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+function deletePendingPush(db, call) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('pending', 'readwrite');
+    tx.objectStore('pending').delete(call);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+async function clearPendingPush(call) {
+  if (!call || !('indexedDB' in window)) return;
+  try {
+    const db = await openPendingPushDB();
+    await deletePendingPush(db, call);
+    db.close();
+  } catch (_) {}
+}
+function saveHistory(call, reason) {
+  if (!call || call.historyRecorded) return;
+  call.historyRecorded = true;
+  clearPendingPush(call.id);
+  const rows = loadHistory();
+  rows.unshift({
+    id: call.id || makeId(),
+    peerId: call.peerId,
+    peerName: call.peerName || 'Абонент',
+    peerLogin: call.peerLogin || '',
+    outgoing: !!call.outgoing,
+    media: call.media || 'audio',
+    reason: reason || 'hangup',
+    startedAt: call.startedAt || Date.now(),
+    endedAt: Date.now(),
+    duration: call.connectedAt ? Math.max(0, Math.floor((Date.now() - call.connectedAt) / 1000)) : 0
+  });
+  localStorage.setItem(historyKey(), JSON.stringify(rows.slice(0, 100)));
+  renderHistory();
+  renderContacts();
+}
+function renderHistory() {
+  const list = $('history-list');
+  if (!list) return;
+  list.replaceChildren();
+  const rows = loadHistory();
+  $('history-empty').classList.toggle('hidden', rows.length > 0);
+  for (const item of rows) {
+    const row = document.createElement('div');
+    row.className = 'history-item';
+    const icon = document.createElement('span');
+    icon.className = 'history-direction ' + (item.reason === 'missed' || item.reason === 'no_answer' && !item.outgoing ? 'missed' : item.outgoing ? 'outgoing' : 'incoming');
+    icon.textContent = item.outgoing ? '↗' : '↙';
+    const info = document.createElement('div');
+    info.className = 'history-info';
+    const name = document.createElement('div');
+    name.className = 'contact-name';
+    name.textContent = item.peerName || item.peerLogin || 'Абонент';
+    const detail = document.createElement('div');
+    detail.className = 'contact-status';
+    const kind = item.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
+    detail.textContent = historyResult(item) + ' · ' + kind + ' · ' + formatHistoryDate(item.startedAt);
+    info.append(name, detail);
+    const duration = document.createElement('span');
+    duration.className = 'history-duration';
+    duration.textContent = item.duration ? formatDuration(item.duration) : '';
+    row.append(icon, info, duration);
+    list.append(row);
+  }
+}
+function historyResult(item) {
+  if (item.reason === 'missed' || item.reason === 'no_answer' && !item.outgoing) return 'Пропущен';
+  if (item.reason === 'rejected' || item.reason === 'declined') return 'Отклонён';
+  if (item.reason === 'no_answer') return 'Нет ответа';
+  if (item.reason === 'busy') return 'Занято';
+  if (item.reason === 'offline') return 'Недоступен';
+  if (item.reason === 'cancelled') return 'Отменён';
+  if (item.reason === 'answered_elsewhere') return 'Ответили на другом устройстве';
+  return item.outgoing ? 'Исходящий' : 'Входящий';
+}
+function formatHistoryDate(timestamp) {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const label = sameDay(date, today) ? 'Сегодня' : sameDay(date, yesterday) ? 'Вчера' : date.toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit'});
+  return label + ', ' + date.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+}
+function formatDuration(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? minutes + ':' + String(seconds % 60).padStart(2, '0') : seconds + ' с';
+}
+function showMainTab(tab) {
+  const history = tab === 'history';
+  show(history ? 'history-view' : 'contacts-view');
+  hide(history ? 'contacts-view' : 'history-view');
+  $('tab-history').classList.toggle('selected', history);
+  $('tab-contacts').classList.toggle('selected', !history);
+  $('top-title').textContent = history ? 'Недавние' : 'Контакты';
+  if (history) renderHistory();
+}
+$('tab-contacts').addEventListener('click', () => showMainTab('contacts'));
+$('tab-history').addEventListener('click', () => showMainTab('history'));
+$('clear-history').addEventListener('click', () => {
+  if (!confirm('Очистить историю звонков?')) return;
+  localStorage.removeItem(historyKey());
+  renderHistory();
+});
 function logoutLocal() {
+  endCall(false, 'cancelled');
   state.token = ''; state.user = null;
   localStorage.removeItem('kukukha.token');
   if (state.ws) state.ws.close();
   state.ws = null;
-  endCall(false);
   hide('main-screen'); hide('call-screen'); show('login-screen');
 }
 $('logout').addEventListener('click', async () => {
@@ -103,6 +278,7 @@ $('logout').addEventListener('click', async () => {
   logoutLocal();
 });
 
+// Load the current contact list from the server.
 async function loadContacts() {
   try {
     const data = await api('/contacts');
@@ -114,6 +290,11 @@ $('refresh-contacts').addEventListener('click', loadContacts);
 function renderContacts() {
   const list = $('contacts-list'); list.replaceChildren();
   const visibleContacts = state.contacts.filter(contact => state.online.has(Number(contact.id)) || contact.online || contact.reachable);
+  const latestCalls = new Map();
+  for (const item of loadHistory()) {
+    const peerId = Number(item.peerId);
+    if (peerId && !latestCalls.has(peerId)) latestCalls.set(peerId, item);
+  }
   $('contacts-empty').classList.toggle('hidden', visibleContacts.length > 0);
   $('contacts-empty').textContent = state.contacts.length ? 'Нет абонентов в сети' : 'Контактов пока нет';
   for (const contact of visibleContacts) {
@@ -127,6 +308,14 @@ function renderContacts() {
     const dot = document.createElement('span'); dot.className = 'dot' + (online ? ' online' : '');
     status.append(dot, document.createTextNode(online ? 'В сети' : contact.reachable ? 'Доступен для вызова' : 'Не в сети'));
     info.append(name, status);
+    const lastCall = latestCalls.get(Number(contact.id));
+    if (lastCall) {
+      const lastCallLine = document.createElement('div');
+      lastCallLine.className = 'contact-status';
+      const kind = lastCall.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
+      lastCallLine.textContent = kind + ' · ' + historyResult(lastCall) + ' · ' + formatHistoryDate(lastCall.startedAt);
+      info.append(lastCallLine);
+    }
     const call = document.createElement('button'); call.className = 'call-button'; call.type = 'button';
     call.innerHTML = ICON_CALL; call.title = 'Видеозвонок'; call.setAttribute('aria-label', 'Видеозвонок');
     call.addEventListener('click', () => startCall(contact, 'video'));
@@ -142,8 +331,13 @@ async function loadProfile() {
     await loadAvatar(data.user.id, data.avatar, $('my-avatar'));
   } catch (error) { toast(error.message); }
 }
-$('settings-open').addEventListener('click', () => { hide('contacts-view'); show('settings-view'); $('top-title').textContent = 'Настройки'; loadProfile(); });
-$('settings-close').addEventListener('click', () => { hide('settings-view'); show('contacts-view'); $('top-title').textContent = 'Контакты'; });
+$('settings-open').addEventListener('click', () => {
+  hide('contacts-view'); hide('history-view'); hide('main-tabs');
+  show('settings-view'); $('top-title').textContent = 'Настройки'; loadProfile(); updatePushStatus();
+});
+$('settings-close').addEventListener('click', () => {
+  hide('settings-view'); show('main-tabs'); showMainTab('contacts');
+});
 $('save-profile').addEventListener('click', async () => {
   $('profile-error').textContent = '';
   try {
@@ -179,12 +373,13 @@ function toJpeg(file) {
   });
 }
 
+// Keep the signaling connection alive while the app is open.
 function connectSocket() {
   clearTimeout(state.reconnectTimer);
   if (!state.token || state.ws) return;
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
   const ws = new WebSocket(url); state.ws = ws;
-  ws.addEventListener('open', () => ws.send(JSON.stringify({t:'auth', token:state.token, proto:1, ...(state.call?.id ? {call:state.call.id} : {})})));
+  ws.addEventListener('open', () => ws.send(JSON.stringify({t:'auth', token:state.token, proto:1, ...(state.call?.id ? {call:state.call.id} : state.wakeCall ? {call:state.wakeCall} : {})})));
   ws.addEventListener('message', event => {
     let message; try { message = JSON.parse(event.data); } catch (_) { return; }
     handleSocketMessage(message);
@@ -207,6 +402,10 @@ function handleSocketMessage(message) {
     case 'auth.ok':
       state.online = new Set((message.online || []).map(Number));
       setConnection('На связи с сервером', 'online'); renderContacts(); loadContacts();
+      if (state.wakeCall) {
+        state.wakeCall = '';
+        history.replaceState(null, '', location.pathname);
+      }
       if (message.calls?.length && state.call && !state.call.id) state.call.id = message.calls[0].id;
       break;
     case 'presence':
@@ -215,6 +414,11 @@ function handleSocketMessage(message) {
     case 'call.created':
       if (!state.call) return;
       state.call.id = message.call.id; state.call.state = 'calling'; state.call.ice = message.ice;
+      if (state.call.cancelRequested) {
+        send({t:'call.cancel', call:state.call.id});
+        endCall(false, 'cancelled');
+        break;
+      }
       $('call-state').textContent = 'Вызов'; $('call-message').textContent = 'Вызов абонента…';
       break;
     case 'call.incoming': incomingCall(message); break;
@@ -227,8 +431,8 @@ function handleSocketMessage(message) {
       }
       break;
     case 'call.signal': handleSignal(message); break;
-    case 'call.media': if (state.call?.id === message.call) $('call-kind').textContent = message.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок'; break;
-    case 'call.ended': if (state.call?.id === message.call) { const reason = message.reason; endCall(false); toast(endReason(reason)); } break;
+    case 'call.media': if (state.call?.id === message.call) { state.call.media = message.media; $('call-kind').textContent = message.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок'; $('answer-video').classList.toggle('hidden', message.media !== 'video'); } break;
+    case 'call.ended': if (state.call?.id === message.call) { const reason = message.reason; endCall(false, reason); toast(endReason(reason)); } break;
     case 'ice': if (state.call?.id === message.call && state.pc) state.pc.setConfiguration(rtcConfig(message.ice)); break;
     case 'error': handleServerError(message); break;
     case 'pong': break;
@@ -241,22 +445,24 @@ function endReason(reason) {
 function handleServerError(message) {
   const map = {server_busy:'Сервер занят',already_in_call:'Вы уже участвуете в другом вызове',unknown_user:'Абонент не найден',busy:'Абонент занят',offline:'Абонент недоступен'};
   toast(map[message.code] || message.code || 'Ошибка сервера');
-  if (message.ref === 'call.invite' && state.call) endCall(false);
+  if (message.ref === 'call.invite' && state.call) endCall(false, message.code || 'failed');
 }
 
 function startCall(contact, media) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) { toast('Нет связи с сервером'); return; }
   if (state.call) return;
-  state.call = {id:'', peerId:contact.id, peerName:contact.name || contact.login, media, outgoing:true, state:'calling', ice:null};
+  state.call = {id:'', peerId:contact.id, peerName:contact.name || contact.login, peerLogin:contact.login, media, outgoing:true, state:'calling', ice:null, startedAt:Date.now()};
   showCallScreen();
   $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Вызов абонента…';
+  show('active-actions'); updateCallButtons();
   $('call-kind').textContent = media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
   send({t:'call.invite', to:Number(contact.id), media});
 }
+// Show a new incoming call.
 function incomingCall(message) {
   const call = message.call;
   if (state.call && state.call.id !== call.id) { send({t:'call.reject', call:call.id}); return; }
-  state.call = {id:call.id, peerId:call.peer.id, peerName:call.peer.name, media:call.media, outgoing:false, state:'incoming', ice:message.ice};
+  state.call = {id:call.id, peerId:call.peer.id, peerName:call.peer.name, media:call.media, outgoing:false, state:'incoming', ice:message.ice, startedAt:Date.now()};
   send({t:'call.ringing', call:call.id});
   showCallScreen();
   $('call-state').textContent = 'Входящий вызов'; $('call-message').textContent = 'Вам звонят';
@@ -265,6 +471,7 @@ function incomingCall(message) {
   $('answer-video').classList.toggle('hidden', call.media !== 'video');
 }
 function showCallScreen() {
+  $('hangup-call').disabled = false;
   hide('main-screen'); show('call-screen');
   $('call-peer').textContent = state.call.peerName;
   $('incoming-actions').classList.add('hidden'); $('active-actions').classList.add('hidden');
@@ -305,7 +512,7 @@ function resetPreviewPosition() {
 
 $('answer-audio').addEventListener('click', () => acceptCall(false));
 $('answer-video').addEventListener('click', () => acceptCall(true));
-$('reject-call').addEventListener('click', () => { if (state.call) send({t:'call.reject', call:state.call.id}); endCall(false); });
+$('reject-call').addEventListener('click', () => { if (state.call) send({t:'call.reject', call:state.call.id}); endCall(false, 'rejected'); });
 async function acceptCall(withVideo) {
   if (!state.call || state.call.outgoing) return;
   try {
@@ -328,6 +535,7 @@ async function createPeerAndOffer() {
     show('active-actions'); updateCallButtons();
   } catch (error) { toast('Не удалось начать звонок: ' + error.message); send({t:'call.hangup', call:state.call.id}); endCall(false); }
 }
+// Ask for microphone and camera access.
 async function startMedia(withVideo) {
   const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
   state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -360,7 +568,7 @@ async function createPeer() {
   state.pc.onconnectionstatechange = () => {
     if (!state.pc || !state.call) return;
     if (state.pc.connectionState === 'connected') {
-      state.call.state = 'active'; send({t:'call.connected',call:state.call.id});
+      state.call.state = 'active'; state.call.connectedAt = Date.now(); send({t:'call.connected',call:state.call.id});
       $('call-state').textContent = 'Разговор'; $('call-message').textContent = 'Соединение установлено';
     } else if (state.pc.connectionState === 'failed' || state.pc.connectionState === 'closed') {
       if (state.pc.connectionState === 'failed') { toast('Не удалось установить соединение'); send({t:'call.hangup',call:state.call.id}); endCall(false); }
@@ -374,6 +582,7 @@ function rtcConfig(ice) {
   const servers = ice?.servers || [];
   return {iceServers:servers, iceTransportPolicy:ice?.policy === 'relay' ? 'relay' : 'all'};
 }
+// Apply signaling messages from the other caller.
 async function handleSignal(message) {
   if (!state.call || state.call.id !== message.call) return;
   try {
@@ -409,6 +618,7 @@ $('camera-call').addEventListener('click', () => {
 });
 function updateCallButtons() {
   const mute = $('mute-call');
+  mute.classList.toggle('hidden', !state.localStream);
   mute.innerHTML = state.muted ? ICON_MIC_OFF : ICON_MIC;
   mute.title = state.muted ? 'Включить микрофон' : 'Выключить микрофон'; mute.setAttribute('aria-label', mute.title);
   const camera = $('camera-call');
@@ -416,9 +626,22 @@ function updateCallButtons() {
   camera.innerHTML = state.cameraOn ? ICON_CAMERA : ICON_CAMERA_OFF;
   camera.title = state.cameraOn ? 'Выключить камеру' : 'Включить камеру'; camera.setAttribute('aria-label', camera.title);
   $('hangup-call').innerHTML = ICON_HANGUP;
+  $('hangup-call').title = 'Отбой';
+  $('hangup-call').setAttribute('aria-label', 'Отбой');
 }
-$('hangup-call').addEventListener('click', () => { if (state.call?.id) send({t:'call.hangup',call:state.call.id}); endCall(false); });
-function endCall(showMain = true) {
+$('hangup-call').addEventListener('click', () => {
+  if (!state.call) return;
+  if (state.call.outgoing && !state.call.id) {
+    state.call.cancelRequested = true;
+    $('hangup-call').disabled = true;
+    $('call-message').textContent = 'Отмена…';
+    return;
+  }
+  if (state.call.id) send({t:'call.hangup',call:state.call.id});
+  endCall(false, state.call.outgoing && state.call.state === 'calling' ? 'cancelled' : 'hangup');
+});
+function endCall(showMain = true, reason = 'hangup') {
+  saveHistory(state.call, reason);
   if (state.pc) { state.pc.ontrack = null; state.pc.onicecandidate = null; state.pc.onconnectionstatechange = null; state.pc.close(); }
   state.pc = null;
   if (state.localStream) state.localStream.getTracks().forEach(track => track.stop());
@@ -434,7 +657,87 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.token && (!state.ws || state.ws.readyState > WebSocket.OPEN)) connectSocket();
 });
 window.addEventListener('online', () => { if (state.token) connectSocket(); });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(error => console.warn('Service worker:', error));
+let swRegistration = null;
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js')
+    .then(registration => { swRegistration = registration; })
+    .catch(error => console.warn('Service worker:', error));
+}
+
+// Ask for notification permission only after the user presses the button.
+$('push-enable').addEventListener('click', enableWebPush);
+$('push-disable').addEventListener('click', disableWebPush);
+async function updatePushStatus() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    $('push-status').textContent = 'Этот браузер не поддерживает Web Push';
+    $('push-enable').classList.add('hidden');
+    $('push-disable').classList.add('hidden');
+    return;
+  }
+  try {
+    const registration = swRegistration || await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    $('push-status').textContent = subscription ? 'Уведомления включены' :
+      Notification.permission === 'denied' ? 'Уведомления заблокированы в браузере' : 'Уведомления не настроены';
+    $('push-enable').classList.toggle('hidden', !!subscription || Notification.permission === 'denied');
+    $('push-disable').classList.toggle('hidden', !subscription);
+  } catch (_) {
+    $('push-status').textContent = 'Не удалось проверить уведомления';
+  }
+}
+async function syncExistingPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const registration = swRegistration || await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return;
+    const key = await api('/push/vapid-public-key');
+    if (key.enabled) {
+      await api('/push/subscription', {method:'PUT', body:JSON.stringify(subscription.toJSON())});
+    }
+  } catch (error) {
+    console.warn('Web Push subscription sync:', error);
+  }
+}
+function decodeVapidKey(value) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
+  return Uint8Array.from(atob(padded), char => char.charCodeAt(0));
+}
+async function enableWebPush() {
+  try {
+    if (!('Notification' in window)) throw new Error('Web Push не поддерживается');
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') throw new Error('Разрешение на уведомления не получено');
+    const key = await api('/push/vapid-public-key');
+    if (!key.enabled || !key.public_key) throw new Error('Web Push не настроен на сервере');
+    const registration = swRegistration || await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeVapidKey(key.public_key)
+      });
+    }
+    await api('/push/subscription', {method:'PUT', body:JSON.stringify(subscription.toJSON())});
+    toast('Уведомления включены');
+    updatePushStatus();
+  } catch (error) {
+    toast(error.message || 'Не удалось включить уведомления');
+    updatePushStatus();
+  }
+}
+async function disableWebPush() {
+  try {
+    const registration = swRegistration || await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) await subscription.unsubscribe();
+    await api('/push/subscription', {method:'DELETE'});
+    toast('Уведомления отключены');
+  } catch (error) {
+    toast(error.message || 'Не удалось отключить уведомления');
+  }
+  updatePushStatus();
+}
 if (state.token) {
   api('/me').then(data => { state.user = data.user; enterApp(); }).catch(() => {});
 }

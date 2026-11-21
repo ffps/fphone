@@ -47,6 +47,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/login", s.rest(s.handleLogin))
 	mux.HandleFunc("POST /api/v1/logout", s.authed(s.handleLogout))
 	mux.HandleFunc("PUT /api/v1/device", s.authed(s.handleDevice))
+	mux.HandleFunc("GET /api/v1/push/vapid-public-key", s.authed(s.handleWebPushKey))
+	mux.HandleFunc("PUT /api/v1/push/subscription", s.authed(s.handleWebPushSubscription))
+	mux.HandleFunc("DELETE /api/v1/push/subscription", s.authed(s.handleWebPushDelete))
 	mux.HandleFunc("GET /api/v1/contacts", s.authed(s.handleContacts))
 	mux.HandleFunc("GET /api/v1/users/{id}/avatar", s.authed(s.handleAvatar))
 	mux.HandleFunc("GET /api/v1/me", s.authed(s.handleMeGet))
@@ -353,6 +356,47 @@ func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request, sess *Sess
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (s *Server) handleWebPushKey(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if s.cfg.WebPush.PublicKey == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "public_key": s.cfg.WebPush.PublicKey})
+}
+
+func (s *Server) handleWebPushSubscription(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if s.cfg.WebPush.PublicKey == "" {
+		writeErr(w, http.StatusServiceUnavailable, "web_push_disabled", "Web Push is not configured")
+		return
+	}
+	var sub webPushSubscription
+	if !decodeJSON(w, r, &sub) {
+		return
+	}
+	if len(sub.Endpoint) > 4096 || len(sub.Keys.P256dh) > 256 || len(sub.Keys.Auth) > 256 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid Web Push subscription")
+		return
+	}
+	if err := validateWebPushSubscription(sub); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := s.store.SetWebPush(sess.DeviceID, sub.Endpoint, sub.Keys.P256dh, sub.Keys.Auth); err != nil {
+		serverErr(w, err)
+		return
+	}
+	slog.Info("Web Push subscription registered", "user", sess.User.Login, "device_id", sess.DeviceID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleWebPushDelete(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if err := s.store.DeleteWebPush(sess.DeviceID); err != nil {
+		serverErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Session) {
 	users, err := s.store.Contacts(sess.User.ID)
 	if err != nil {
@@ -364,25 +408,19 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Se
 	// "online" means an open WebSocket. "reachable" also counts users who can be woken up by a push
 	// message (the app is closed or in the background): a call to them is possible.
 	type contact struct {
-		ID        int64        `json:"id"`
-		Login     string       `json:"login"`
-		Name      string       `json:"name"`
-		Online    bool         `json:"online"`
-		Reachable bool         `json:"reachable"`
-		Avatar    int64        `json:"avatar"`
-		LastSeen  int64        `json:"last_seen"`
-		LastCall  *LastCallRow `json:"last_call,omitempty"`
+		ID        int64  `json:"id"`
+		Login     string `json:"login"`
+		Name      string `json:"name"`
+		Online    bool   `json:"online"`
+		Reachable bool   `json:"reachable"`
+		Avatar    int64  `json:"avatar"`
+		LastSeen  int64  `json:"last_seen"`
 	}
 	out := make([]contact, 0, len(users))
 	for _, u := range users {
 		on := online[u.ID]
-		lastCall, e := s.store.LastCallBetween(sess.User.ID, u.ID)
-		if e != nil {
-			serverErr(w, e)
-			return
-		}
 		out = append(out, contact{ID: u.ID, Login: u.Login, Name: u.Name, Online: on,
-			Reachable: on || (canPush && u.HasPush), Avatar: s.avatarVersionForLogin(u.Login), LastSeen: u.LastSeen, LastCall: lastCall})
+			Reachable: on || (canPush && u.HasPush), Avatar: s.avatarVersionForLogin(u.Login), LastSeen: u.LastSeen})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": out})
 }

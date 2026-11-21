@@ -80,7 +80,13 @@ calls:
 fcm:
   credentials_file: ""   # service account JSON from the Firebase console; empty = push disabled
   project_id: ""         # optional, normally read from the credentials file
-  # The push message carries the call ID, caller ID, media type and (if enabled) the caller name.
-  # It travels through Google servers. Set false to leave the name out; the app then shows
-  # the name only after it has connected to this server.
+  # The push message carries the call ID, caller ID and media type. Set send_caller_name=false
+  # to keep the caller name out of both FCM and Web Push notifications.
   send_caller_name: true
+
+# Web Push for the browser PWA. Generate keys with: fphone generate-vapid
+# Keep private_key secret. No Firebase or Apple account is needed.
+web_push:
+  public_key: ""
+  private_key: ""
+  subject: "mailto:admin@example.com"

@@ -55,19 +55,25 @@ type Call struct {
 	AcceptedAt   time.Time
 	ConnectedAt  time.Time
 
-	pushed map[int64]string // devices that got a wake-up push (device ID -> push token)
+	pushed map[int64]pushedTarget // devices that received a wake-up push
 
 	ringTimer   *time.Timer
 	callerGrace *time.Timer // runs while the caller device has no WebSocket
 	calleeGrace *time.Timer // runs while the callee device has no WebSocket
 }
 
+type pushedTarget struct {
+	fcmToken string
+	webPush  *WebPushTarget
+}
+
 type Calls struct {
-	cfg   *Config
-	store *Store
-	hub   *Hub
-	ice   ICEProvider
-	push  *FCM // nil when push is disabled
+	cfg     *Config
+	store   *Store
+	hub     *Hub
+	ice     ICEProvider
+	push    *FCM
+	webPush *WebPush
 
 	mu     sync.Mutex
 	byID   map[string]*Call
@@ -88,11 +94,14 @@ func NewCalls(cfg *Config, store *Store, hub *Hub) *Calls {
 // SetICE must be called before the server starts accepting connections.
 func (m *Calls) SetICE(p ICEProvider) { m.ice = p }
 
-// SetPush enables wake-up pushes. It must be called before the server starts.
-func (m *Calls) SetPush(p *FCM) { m.push = p }
+// SetPush configures the available push transports before the server starts.
+func (m *Calls) SetPush(fcm *FCM, web *WebPush) {
+	m.push = fcm
+	m.webPush = web
+}
 
-// CanPush reports whether wake-up pushes are configured.
-func (m *Calls) CanPush() bool { return m.push != nil }
+// CanPush reports whether at least one push transport is configured.
+func (m *Calls) CanPush() bool { return m.push != nil || m.webPush != nil }
 
 // AllowTurn tells the TURN server whether a user may use the relay for a call right now.
 func (m *Calls) AllowTurn(callID string, userID int64) bool {
@@ -157,22 +166,43 @@ func (m *Calls) incomingMsg(call *Call) map[string]any {
 // A woken app connects its WebSocket and then receives call.incoming from onConnect.
 // m.mu must be held.
 func (m *Calls) wake(call *Call) bool {
-	if m.push == nil {
+	if !m.CanPush() {
 		return false
 	}
-	targets, err := m.store.PushTargets(call.CalleeID)
-	if err != nil {
-		slog.Error("push: cannot read push tokens", "err", err)
-		return false
+	targets := map[int64]pushedTarget{}
+	if m.push != nil {
+		fcmTargets, err := m.store.PushTargets(call.CalleeID)
+		if err != nil {
+			slog.Error("push: cannot read FCM tokens", "err", err)
+		} else {
+			for _, t := range fcmTargets {
+				target := targets[t.DeviceID]
+				target.fcmToken = t.Token
+				targets[t.DeviceID] = target
+			}
+		}
+	}
+	if m.webPush != nil {
+		webTargets, err := m.store.WebPushTargets(call.CalleeID)
+		if err != nil {
+			slog.Error("web push: cannot read subscriptions", "err", err)
+		} else {
+			for _, t := range webTargets {
+				target := targets[t.DeviceID]
+				copy := t
+				target.webPush = &copy
+				targets[t.DeviceID] = target
+			}
+		}
 	}
 	online := map[int64]bool{}
 	for _, d := range m.hub.UserDevices(call.CalleeID) {
 		online[d] = true
 	}
-	call.pushed = map[int64]string{}
-	for _, t := range targets {
-		if !online[t.DeviceID] {
-			call.pushed[t.DeviceID] = t.Token
+	call.pushed = map[int64]pushedTarget{}
+	for id, target := range targets {
+		if !online[id] && (target.fcmToken != "" || target.webPush != nil) {
+			call.pushed[id] = target
 		}
 	}
 	if len(call.pushed) == 0 {
@@ -184,32 +214,62 @@ func (m *Calls) wake(call *Call) bool {
 		"call":    call.ID,
 		"from_id": strconv.FormatInt(call.CallerID, 10),
 		"media":   call.Media,
-		"exp":     strconv.FormatInt(time.Now().Add(ttl).Unix(), 10), // the app must ignore the push after this time
+		"exp":     strconv.FormatInt(time.Now().Add(ttl).Unix(), 10),
 	}
-	if m.push.sendName {
+	if m.cfg.FCM.SendCallerName {
 		data["from_name"] = call.CallerName
 	}
-	go m.sendPushes(call.ID, call.CalleeLogin, maps.Clone(call.pushed), data, ttl)
+	payloadData := map[string]any{
+		"type": "call.incoming", "call": call.ID, "from_id": call.CallerID, "to_id": call.CalleeID,
+		"media": call.Media, "started_at": call.CreatedAt.Unix(), "exp": time.Now().Add(ttl).Unix(),
+		"title": "Входящий вызов", "body": "Откройте Кукуху, чтобы ответить",
+	}
+	if m.cfg.FCM.SendCallerName {
+		payloadData["from_name"] = call.CallerName
+		payloadData["body"] = "Вам звонит " + call.CallerName
+	}
+	payload, _ := json.Marshal(payloadData)
+	go m.sendPushes(call.ID, call.CalleeLogin, maps.Clone(call.pushed), data, payload, ttl)
 	return true
 }
 
-func (m *Calls) sendPushes(callID, login string, targets map[int64]string, data map[string]string, ttl time.Duration) {
+func (m *Calls) sendPushes(callID, login string, targets map[int64]pushedTarget, data map[string]string, payload []byte, ttl time.Duration) {
 	ok := 0
-	for deviceID, token := range targets {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		messageID, err := m.push.SendWithResult(ctx, token, data, "call-"+callID, ttl)
-		cancel()
-		if err == nil {
+	for deviceID, target := range targets {
+		delivered := false
+		if target.fcmToken != "" && m.push != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			messageID, err := m.push.SendWithResult(ctx, target.fcmToken, data, "call-"+callID, ttl)
+			cancel()
+			if err == nil {
+				delivered = true
+				slog.Debug("push delivery accepted by FCM", "call", callID, "recipient", login, "device_id", deviceID, "message_id", messageID, "result", "accepted")
+			} else if errors.Is(err, ErrTokenInvalid) {
+				slog.Warn("FCM token is not registered, removing it", "call", callID, "recipient", login, "device_id", deviceID, "error", err)
+				m.store.ClearFCM(deviceID, target.fcmToken)
+			} else {
+				slog.Error("FCM push delivery failed", "call", callID, "recipient", login, "device_id", deviceID, "err", err)
+			}
+		}
+		if target.webPush != nil && m.webPush != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			err := m.webPush.Send(ctx, *target.webPush, payload, ttl)
+			cancel()
+			if err == nil {
+				delivered = true
+				slog.Debug("push delivery accepted by Web Push", "call", callID, "recipient", login, "device_id", deviceID, "result", "accepted")
+			} else if errors.Is(err, ErrWebPushGone) {
+				slog.Warn("Web Push subscription is gone, removing it", "call", callID, "recipient", login, "device_id", deviceID)
+				m.store.ClearWebPush(deviceID, target.webPush.Endpoint)
+			} else {
+				slog.Error("Web Push delivery failed", "call", callID, "recipient", login, "device_id", deviceID, "err", err)
+			}
+		}
+		if delivered {
 			ok++
-			slog.Debug("push delivery accepted by FCM", "call", callID, "recipient", login, "device_id", deviceID, "message_id", messageID, "message_type", data["type"], "priority", "HIGH", "result", "accepted")
-		} else if errors.Is(err, ErrTokenInvalid) {
-			slog.Warn("push token is not registered, removing it", "call", callID, "recipient", login, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "UNREGISTERED", "error", err)
-			m.store.ClearFCM(deviceID, token)
-		} else {
-			slog.Error("push delivery failed", "call", callID, "recipient", login, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "error", "err", err)
 		}
 	}
-	slog.Debug("push batch finished", "call", callID, "recipient", login, "ok", ok, "devices", len(targets), "message_type", data["type"], "priority", "HIGH")
+	slog.Debug("push batch finished", "call", callID, "recipient", login, "ok", ok, "devices", len(targets))
 	if ok == 0 {
 		m.onPushFailed(callID)
 	}
@@ -233,13 +293,13 @@ func (m *Calls) onPushFailed(callID string) {
 // that the call is over or was answered elsewhere, so they can remove the incoming call
 // screen. m.mu must be held.
 func (m *Calls) cancelPushes(call *Call, exceptDevice int64) {
-	if m.push == nil || len(call.pushed) == 0 {
+	if len(call.pushed) == 0 {
 		return
 	}
-	targets := map[int64]string{}
-	for d, tok := range call.pushed {
+	targets := map[int64]pushedTarget{}
+	for d, target := range call.pushed {
 		if d != exceptDevice && !m.hub.DeviceOnline(d) {
-			targets[d] = tok
+			targets[d] = target
 		}
 	}
 	call.pushed = nil
@@ -248,18 +308,28 @@ func (m *Calls) cancelPushes(call *Call, exceptDevice int64) {
 	}
 	id := call.ID
 	data := map[string]string{"type": "call.cancelled", "call": id}
+	payload, _ := json.Marshal(map[string]any{"type": "call.cancelled", "call": id})
 	go func() {
-		for deviceID, tok := range targets {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			messageID, err := m.push.SendWithResult(ctx, tok, data, "call-"+id, time.Minute)
-			cancel()
-			if err == nil {
-				slog.Debug("push delivery accepted by FCM", "call", id, "recipient", call.CalleeLogin, "device_id", deviceID, "message_id", messageID, "message_type", data["type"], "priority", "HIGH", "result", "accepted")
-			} else if errors.Is(err, ErrTokenInvalid) {
-				slog.Warn("push token is not registered", "call", id, "recipient", call.CalleeLogin, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "UNREGISTERED", "error", err)
-				m.store.ClearFCM(deviceID, tok)
-			} else {
-				slog.Warn("push cancel message failed", "call", id, "recipient", call.CalleeLogin, "device_id", deviceID, "message_type", data["type"], "priority", "HIGH", "result", "error", "err", err)
+		for deviceID, target := range targets {
+			if target.fcmToken != "" && m.push != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				_, err := m.push.SendWithResult(ctx, target.fcmToken, data, "call-"+id, time.Minute)
+				cancel()
+				if errors.Is(err, ErrTokenInvalid) {
+					m.store.ClearFCM(deviceID, target.fcmToken)
+				} else if err != nil {
+					slog.Warn("FCM push cancel failed", "call", id, "device_id", deviceID, "err", err)
+				}
+			}
+			if target.webPush != nil && m.webPush != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				err := m.webPush.Send(ctx, *target.webPush, payload, time.Minute)
+				cancel()
+				if errors.Is(err, ErrWebPushGone) {
+					m.store.ClearWebPush(deviceID, target.webPush.Endpoint)
+				} else if err != nil {
+					slog.Warn("Web Push cancel failed", "call", id, "device_id", deviceID, "err", err)
+				}
 			}
 		}
 	}()
@@ -322,6 +392,7 @@ func (m *Calls) invite(c *Client, to int64, media string) {
 		return
 	}
 
+	c.hub.store.MarkActivity(c.sess.DeviceID)
 	call := &Call{
 		ID:           newCallID(),
 		CallerID:     c.sess.User.ID,
@@ -398,6 +469,7 @@ func (m *Calls) simple(c *Client, typ, callID string) {
 			c.sendErr("bad_state", typ)
 			return
 		}
+		m.store.MarkActivity(c.sess.DeviceID)
 		call.State = stAccepted
 		call.CalleeDevice = c.sess.DeviceID
 		call.AcceptedAt = time.Now()
@@ -544,7 +616,7 @@ func (m *Calls) endLocked(call *Call, reason string) {
 		m.hub.SendToUser(call.CalleeID, msg)
 	}
 
-	// One log line per call: this is the call journal.
+	// Keep call details in the server log only; call history belongs to each client.
 	now := time.Now()
 	ring := now.Sub(call.CreatedAt)
 	if !call.AcceptedAt.IsZero() {
@@ -553,9 +625,6 @@ func (m *Calls) endLocked(call *Call, reason string) {
 	var talk time.Duration
 	if !call.ConnectedAt.IsZero() {
 		talk = now.Sub(call.ConnectedAt)
-	}
-	if err := m.store.RecordCall(*call, reason, now, int(ring.Seconds()), int(talk.Seconds())); err != nil {
-		slog.Error("cannot write call history", "call", call.ID, "err", err)
 	}
 	slog.Info("call", "id", call.ID, "from", call.CallerLogin, "to", call.CalleeLogin,
 		"media", call.Media, "reason", reason, "ring_s", int(ring.Seconds()), "talk_s", int(talk.Seconds()))

@@ -5,8 +5,9 @@ goes through the TURN relay of the server, so it works between phones behind mob
 
 * Android 8.0 (API 26) or newer.
 * Login with the user name and password that the administrator created on the server.
-* Incoming calls wake the phone through a push message (Firebase Cloud Messaging), also when
-  the app is closed; the call screen is shown over the lock screen.
+* Android incoming calls use Firebase Cloud Messaging; browser PWA calls use standard Web Push.
+  Both can wake a device when the app is in the background.
+* Call history is stored locally on each device. The server keeps only technical logs.
 * The server can use its own certificate. In that case enter the certificate fingerprint
   (`sha256/...`, printed by `fphone fingerprint` on the server) in the login form: the app then
   trusts exactly that server key and nothing else.
@@ -90,8 +91,11 @@ and run:
 gradle assembleDebug -PfphoneAppId=<package_name from google-services.json>
 ```
 
-## Server CLI additions in 0.3.0
+## Server CLI
 
+- `fphone generate-vapid` creates a VAPID key pair for browser Web Push. Add the printed `web_push`
+  block to `fphone.yaml`; keep `private_key` secret and do not regenerate it after subscriptions
+  are registered. No Firebase or Apple developer registration is needed for Web Push.
 - `fphone push-test id=ID` sends a test push to one registered device; `login=LOGIN` targets all
   devices of a user. Optional `title=...` and `text=...` override the defaults.
 - `fphone user name LOGIN` prints the current display name; `fphone user name LOGIN NAME` changes it.
@@ -102,6 +106,13 @@ The server's CLI control listener is bound only to `127.0.0.1` (default port 809
 exposed to the network. Change `control_port` in the server configuration if that local port is
 already in use.
 
+## Browser PWA
+
+The PWA is served from `data_dir/web/pwa/`. It stores its own recent-call list in the browser's
+`localStorage`; this list is not synchronized with Android or other browsers. To enable background
+notifications, sign in, open Settings and press **Enable notifications** after configuring the
+server's `web_push` keys.
+
 ## How it works
 
 * `CallManager` is the brain: it keeps the WebSocket connection to the server only while the app
@@ -109,8 +120,10 @@ already in use.
   active). Screens only show its state.
 * `RtcEngine` wraps one WebRTC peer connection (microphone, optional camera, TURN relay,
   ICE restart after a lost connection).
-* `FcmService` receives the push message for an incoming call; `Notifications` shows the ringing
-  notification with a full screen intent; `CallService` keeps the call alive in the background.
+* `FcmService` receives Android push messages; `Notifications` shows the ringing notification
+  with a full screen intent; `CallService` keeps the call alive in the background.
+* The PWA uses the Service Worker to show Web Push notifications and reconnect to the server after
+  the user opens one.
 * The "Log" button on the main screen shows the diagnostic log and the push token (also useful
   for `fphone push-test TOKEN` on the server).
 
@@ -134,6 +147,20 @@ downloads `Kukukha-X.Y.Z.apk` from the GitHub release and starts the system inst
 
 
 # Changelog
+
+## 0.3.17
+
+- Show each contact’s latest call from the local PWA history, including call type, result and time.
+- Update `devices.last_activity` only when a device starts or answers a call; ordinary API, WebSocket and keepalive activity no longer changes it.
+
+## 0.3.16
+
+- Removed the server call-history table and the last-call summary from the contacts API. Android and PWA keep their own local history.
+- Added per-device `last_activity` tracking.
+- Added browser Web Push subscriptions, VAPID configuration and the `fphone generate-vapid` command. FCM for Android remains in place.
+- Added local call history to the PWA and fixed the visibility of the outgoing-call hangup button.
+- Updated the PWA stylesheet formatting and added short English comments to its JavaScript.
+- Removed the contact-dialog last-call summary from Android; the Recents screen remains local to the phone.
 
 ## 0.3.0 Android
 
@@ -163,3 +190,10 @@ downloads `Kukukha-X.Y.Z.apk` from the GitHub release and starts the system inst
 - Added `device log ID`, which requests the phone's journal over its existing WebSocket and saves it as `data_dir/ID.log`.
 - Added a loopback-only CLI control endpoint for the device-log request.
 - Set defaults to a 90-day session lifetime, 60-second unanswered timeout, five concurrent calls, TURN enabled, and relay ICE policy.
+
+## Database
+
+The server database has no call-history table. Call history belongs to each client; call summaries
+remain in the server log for troubleshooting. This version creates the current schema directly and
+does not migrate older databases. Before starting it with an existing installation, stop the
+server and remove `fphone.db`, `fphone.db-wal` and `fphone.db-shm`, then recreate test users.

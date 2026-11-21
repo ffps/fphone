@@ -273,11 +273,11 @@ func cmdDevice(cfg *Config, args []string) error {
 		fmt.Fprintln(w, "ID\tUSER\tDEVICE\tPUSH\tCREATED\tLAST ACTIVE\tTOKEN UNTIL")
 		for _, d := range devs {
 			push := "no"
-			if d.HasFCM {
+			if d.HasPush {
 				push = "yes"
 			}
 			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", d.ID, d.UserLogin, d.Name, push,
-				fmtTime(d.CreatedAt), fmtTime(d.LastSeen), fmtTime(d.ExpiresAt))
+				fmtTime(d.CreatedAt), fmtTime(d.LastActivity), fmtTime(d.ExpiresAt))
 		}
 		return w.Flush()
 	case "log":

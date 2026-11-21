@@ -1,4 +1,4 @@
-const CACHE = 'kukukha-pwa-v1';
+const CACHE = 'kukukha-pwa-v3';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)));
@@ -15,4 +15,110 @@ self.addEventListener('fetch', event => {
     if (response.ok && url.pathname.startsWith('/pwa/')) caches.open(CACHE).then(cache => cache.put(event.request, response.clone()));
     return response;
   }).catch(() => caches.match(event.request).then(cached => cached || (event.request.mode === 'navigate' ? caches.match('./index.html') : Response.error()))));
+});
+
+
+
+const PUSH_DB = 'kukukha-push';
+const PUSH_STORE = 'pending';
+
+function openPushDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(PUSH_DB, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(PUSH_STORE, {keyPath: 'call'});
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readPushRecord(call) {
+  const db = await openPushDB();
+  const value = await new Promise((resolve, reject) => {
+    const request = db.transaction(PUSH_STORE).objectStore(PUSH_STORE).get(call);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return value;
+}
+
+async function writePushRecord(record) {
+  const db = await openPushDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(PUSH_STORE, 'readwrite');
+    tx.objectStore(PUSH_STORE).put(record);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function deletePushRecord(call) {
+  const db = await openPushDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(PUSH_STORE, 'readwrite');
+    tx.objectStore(PUSH_STORE).delete(call);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  db.close();
+}
+
+// Show incoming call alerts while the PWA is in the background.
+self.addEventListener('push', event => {
+  if (!event.data) return;
+  let data;
+  try {
+    data = event.data.json();
+  } catch (_) {
+    return;
+  }
+  event.waitUntil((async () => {
+    if (data.type === 'call.cancelled') {
+      const notes = await self.registration.getNotifications({tag: 'call-' + data.call});
+      notes.forEach(note => note.close());
+      try {
+        await writePushRecord({call: data.call, cancelled: true, exp: Math.floor(Date.now() / 1000) + 86400});
+      } catch (error) {
+        console.warn('Push queue:', error);
+      }
+      return;
+    }
+    if (data.type !== 'call.incoming') return;
+    try {
+      const old = await readPushRecord(data.call);
+      if (old?.cancelled) return;
+      await writePushRecord(data);
+    } catch (error) {
+      console.warn('Push queue:', error);
+    }
+    await self.registration.showNotification(data.title || 'Входящий вызов', {
+      body: data.body || 'Откройте Кукуху, чтобы ответить',
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      tag: 'call-' + data.call,
+      renotify: true,
+      requireInteraction: true,
+      data: {call: data.call}
+    });
+  })());
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const call = event.notification.data?.call;
+  const url = new URL('./', self.location);
+  if (call) url.searchParams.set('wake', call);
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({type: 'window', includeUncontrolled: true});
+    for (const client of windows) {
+      if ('focus' in client) {
+        if ('navigate' in client) await client.navigate(url.href);
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow(url.href);
+  })());
 });

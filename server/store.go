@@ -48,14 +48,15 @@ type UserRow struct {
 }
 
 type DeviceRow struct {
-	ID        int64
-	UserLogin string
-	UID       string
-	Name      string
-	HasFCM    bool
-	CreatedAt int64
-	LastSeen  int64
-	ExpiresAt int64
+	ID           int64
+	UserLogin    string
+	UID          string
+	Name         string
+	HasPush      bool
+	CreatedAt    int64
+	LastSeen     int64
+	LastActivity int64
+	ExpiresAt    int64
 }
 
 func OpenStore(dir string, ttl time.Duration) (*Store, error) {
@@ -68,16 +69,13 @@ func OpenStore(dir string, ttl time.Duration) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One connection: writes are rare, and this avoids "database is locked" inside one process.
-	// Between processes (server + CLI) WAL mode and busy_timeout do the work.
-	// Important: never run a query while another Rows of the same Store is still open.
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, err
 	}
 	s := &Store{db: db, ttl: ttl}
-	if err := s.migrate(); err != nil {
+	if err := s.createSchema(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -86,39 +84,53 @@ func OpenStore(dir string, ttl time.Duration) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) migrate() error {
-	var v int
-	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+// createSchema creates a new database. Existing databases are not migrated.
+func (s *Store) createSchema() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			name TEXT NOT NULL,
+			pass_hash TEXT NOT NULL,
+			disabled INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS devices (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			device_uid TEXT NOT NULL,
+			name TEXT NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			fcm_token TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			last_seen INTEGER NOT NULL,
+			last_activity INTEGER NOT NULL DEFAULT 0,
+			expires_at INTEGER NOT NULL,
+			UNIQUE(user_id, device_uid)
+		)`,
+		`CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id)`,
+		`CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+			device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+			endpoint TEXT NOT NULL UNIQUE,
+			p256dh TEXT NOT NULL,
+			auth TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("create database schema: %w", err)
+		}
+	}
+	// Fail clearly if an older database was supplied; this release intentionally has no migrations.
+	var hasActivity int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('devices') WHERE name='last_activity'`).Scan(&hasActivity)
+	if err != nil {
 		return err
 	}
-	if v < 1 {
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, login TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, pass_hash TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`,
-			`CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, device_uid TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, fcm_token TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, expires_at INTEGER NOT NULL, UNIQUE(user_id, device_uid))`,
-			`CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id)`,
-		}
-		for _, q := range stmts {
-			if _, err := s.db.Exec(q); err != nil {
-				return fmt.Errorf("database migration: %w", err)
-			}
-		}
-		v = 1
-	}
-	if v < 2 {
-		_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS call_history (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, call_id TEXT NOT NULL, caller_id INTEGER NOT NULL, callee_id INTEGER NOT NULL,
-			caller_login TEXT NOT NULL, callee_login TEXT NOT NULL, caller_name TEXT NOT NULL, callee_name TEXT NOT NULL,
-			media TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL, ended_at INTEGER NOT NULL,
-			ring_s INTEGER NOT NULL, talk_s INTEGER NOT NULL)`)
-		if err != nil {
-			return fmt.Errorf("database migration: %w", err)
-		}
-		if _, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS call_history_pair ON call_history(caller_id,callee_id,ended_at DESC)`); err != nil {
-			return err
-		}
-		if _, err = s.db.Exec(`PRAGMA user_version = 2`); err != nil {
-			return err
-		}
+	if hasActivity == 0 {
+		return errors.New("database has an old schema; stop fphone and remove fphone.db, fphone.db-wal and fphone.db-shm")
 	}
 	return nil
 }
@@ -215,7 +227,7 @@ func (s *Store) DeleteUser(login string) error {
 }
 
 func (s *Store) ListUsers() ([]UserRow, error) {
-	rows, err := s.db.Query(`SELECT u.id,u.login,u.name,u.disabled,u.created_at,COUNT(d.id),COALESCE(MAX(d.last_seen),0)
+	rows, err := s.db.Query(`SELECT u.id,u.login,u.name,u.disabled,u.created_at,COUNT(d.id),COALESCE(MAX(d.last_activity),0)
 		FROM users u LEFT JOIN devices d ON d.user_id=u.id GROUP BY u.id ORDER BY u.login`)
 	if err != nil {
 		return nil, err
@@ -245,8 +257,8 @@ type ContactRow struct {
 // Contacts returns all active users except the one who asks.
 func (s *Store) Contacts(exceptUserID int64) ([]ContactRow, error) {
 	rows, err := s.db.Query(`SELECT u.id,u.login,u.name,
-			EXISTS(SELECT 1 FROM devices d WHERE d.user_id=u.id AND d.fcm_token<>''),
-			COALESCE((SELECT MAX(d.last_seen) FROM devices d WHERE d.user_id=u.id),0)
+			EXISTS(SELECT 1 FROM devices d WHERE d.user_id=u.id AND (d.fcm_token<>'' OR EXISTS(SELECT 1 FROM web_push_subscriptions w WHERE w.device_id=d.id))),
+			COALESCE((SELECT MAX(d.last_activity) FROM devices d WHERE d.user_id=u.id),0)
 		FROM users u WHERE u.disabled=0 AND u.id<>? ORDER BY u.name`, exceptUserID)
 	if err != nil {
 		return nil, err
@@ -335,7 +347,14 @@ func (s *Store) Revalidate(deviceID int64) bool {
 }
 
 func (s *Store) MarkSeen(deviceID int64) {
-	_, _ = s.db.Exec(`UPDATE devices SET last_seen=? WHERE id=?`, time.Now().Unix(), deviceID)
+	now := time.Now().Unix()
+	_, _ = s.db.Exec(`UPDATE devices SET last_seen=? WHERE id=?`, now, deviceID)
+}
+
+// MarkActivity records the time when a device starts or answers a call.
+func (s *Store) MarkActivity(deviceID int64) {
+	now := time.Now().Unix()
+	_, _ = s.db.Exec(`UPDATE devices SET last_activity=? WHERE id=?`, now, deviceID)
 }
 
 func (s *Store) SetFCM(deviceID int64, fcm string) error {
@@ -355,7 +374,7 @@ func (s *Store) DeleteDevice(deviceID int64) error {
 }
 
 func (s *Store) ListDevices(login string) ([]DeviceRow, error) {
-	q := `SELECT d.id,u.login,d.device_uid,d.name,d.fcm_token<>'',d.created_at,d.last_seen,d.expires_at
+	q := `SELECT d.id,u.login,d.device_uid,d.name,(d.fcm_token<>'' OR EXISTS(SELECT 1 FROM web_push_subscriptions w WHERE w.device_id=d.id)),d.created_at,d.last_seen,d.last_activity,d.expires_at
 		FROM devices d JOIN users u ON u.id=d.user_id`
 	var args []any
 	if login != "" {
@@ -372,10 +391,10 @@ func (s *Store) ListDevices(login string) ([]DeviceRow, error) {
 	for rows.Next() {
 		var r DeviceRow
 		var fcm int
-		if err := rows.Scan(&r.ID, &r.UserLogin, &r.UID, &r.Name, &fcm, &r.CreatedAt, &r.LastSeen, &r.ExpiresAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.UserLogin, &r.UID, &r.Name, &fcm, &r.CreatedAt, &r.LastSeen, &r.LastActivity, &r.ExpiresAt); err != nil {
 			return nil, err
 		}
-		r.HasFCM = fcm != 0
+		r.HasPush = fcm != 0
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -428,57 +447,6 @@ func (s *Store) ClearFCM(deviceID int64, token string) error {
 	return err
 }
 
-type LastCallRow struct {
-	Ts          int64  `json:"ts"`
-	Outgoing    bool   `json:"outgoing"`
-	Video       bool   `json:"video"`
-	Result      string `json:"result"`
-	DurationSec int    `json:"duration_sec"`
-}
-
-func (s *Store) RecordCall(c Call, reason string, ended time.Time, ring, talk int) error {
-	_, err := s.db.Exec(`INSERT INTO call_history(call_id,caller_id,callee_id,caller_login,callee_login,caller_name,callee_name,media,reason,created_at,ended_at,ring_s,talk_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.ID, c.CallerID, c.CalleeID, c.CallerLogin, c.CalleeLogin, c.CallerName, c.CalleeName, c.Media, reason, c.CreatedAt.Unix(), ended.Unix(), ring, talk)
-	return err
-}
-
-func (s *Store) LastCallBetween(userID, peerID int64) (*LastCallRow, error) {
-	var r LastCallRow
-	var media string
-	var reason string
-	var callerID int64
-	err := s.db.QueryRow(`SELECT created_at,caller_id,media,reason,talk_s FROM call_history WHERE (caller_id=? AND callee_id=?) OR (caller_id=? AND callee_id=?) ORDER BY ended_at DESC,id DESC LIMIT 1`, userID, peerID, peerID, userID).Scan(&r.Ts, &callerID, &media, &reason, &r.DurationSec)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	r.Outgoing = callerID == userID
-	r.Video = media == "video"
-	switch reason {
-	case "no_answer", "cancelled", "offline":
-		if !r.Outgoing {
-			r.Result = "missed"
-		} else {
-			r.Result = reason
-		}
-	case "rejected":
-		r.Result = "rejected"
-	case "declined":
-		r.Result = "declined"
-	case "answered_elsewhere":
-		r.Result = "elsewhere"
-	case "busy":
-		r.Result = "busy"
-	case "hangup", "timeout":
-		r.Result = "answered"
-	default:
-		r.Result = reason
-	}
-	return &r, nil
-}
-
 func (s *Store) PushTargetByDevice(deviceID int64) (PushTarget, string, error) {
 	var t PushTarget
 	var login string
@@ -487,4 +455,63 @@ func (s *Store) PushTargetByDevice(deviceID int64) (PushTarget, string, error) {
 		return PushTarget{}, "", ErrNotFound
 	}
 	return t, login, err
+}
+
+// WebPushTarget is a browser subscription registered by one device.
+type WebPushTarget struct {
+	DeviceID int64
+	Endpoint string
+	P256dh   string
+	Auth     string
+	Login    string
+}
+
+// SetWebPush stores or replaces the Web Push subscription for a device.
+func (s *Store) SetWebPush(deviceID int64, endpoint, p256dh, auth string) error {
+	now := time.Now().Unix()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM web_push_subscriptions WHERE device_id=? OR endpoint=?`, deviceID, endpoint); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO web_push_subscriptions(device_id,endpoint,p256dh,auth,created_at,updated_at)
+		VALUES(?,?,?,?,?,?)`, deviceID, endpoint, p256dh, auth, now, now); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DeleteWebPush(deviceID int64) error {
+	_, err := s.db.Exec(`DELETE FROM web_push_subscriptions WHERE device_id=?`, deviceID)
+	return err
+}
+
+func (s *Store) WebPushTargets(userID int64) ([]WebPushTarget, error) {
+	rows, err := s.db.Query(`SELECT d.id,w.endpoint,w.p256dh,w.auth,u.login
+		FROM web_push_subscriptions w
+		JOIN devices d ON d.id=w.device_id
+		JOIN users u ON u.id=d.user_id
+		WHERE d.user_id=?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WebPushTarget
+	for rows.Next() {
+		var t WebPushTarget
+		if err := rows.Scan(&t.DeviceID, &t.Endpoint, &t.P256dh, &t.Auth, &t.Login); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ClearWebPush(deviceID int64, endpoint string) error {
+	_, err := s.db.Exec(`DELETE FROM web_push_subscriptions WHERE device_id=? AND endpoint=?`, deviceID, endpoint)
+	return err
 }
