@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#5265a8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Кукуха">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="app.css">
+  <title>Кукуха</title>
+</head>
+<body>
+  <main id="app">
+    <section id="login-screen" class="screen login-screen">
+      <div class="brand"><img src="icon-192.png" alt=""><div><h1>Кукуха</h1><p>Персональная звонилка</p></div></div>
+      <form id="login-form" class="panel">
+        <label>Логин<input id="login" name="login" autocomplete="username" required maxlength="64"></label>
+        <label>Пароль<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+        <p id="login-error" class="error" role="alert"></p>
+        <button class="primary" type="submit">Войти</button>
+      </form>
+    </section>
+
+    <section id="main-screen" class="screen hidden">
+      <header class="topbar">
+        <div class="brand-small"><img src="icon-192.png" alt=""><strong id="top-title">Контакты</strong></div>
+        <button id="settings-open" class="icon-button" aria-label="Настройки">⋮</button>
+      </header>
+      <div id="connection-state" class="connection">Подключение…</div>
+      <div id="contacts-view" class="view">
+        <div class="view-heading"><h2>Контакты</h2><button id="refresh-contacts" class="text-button">Обновить</button></div>
+        <div id="contacts-list" class="contact-list"></div>
+        <p id="contacts-empty" class="muted empty hidden">Контактов пока нет</p>
+      </div>
+      <section id="settings-view" class="view hidden">
+        <div class="view-heading"><h2>Настройки</h2><button id="settings-close" class="text-button">Готово</button></div>
+        <div class="panel profile-panel">
+          <img id="my-avatar" class="my-avatar" src="icon-192.png" alt="Фото профиля">
+          <label class="file-button">Изменить фото<input id="avatar-file" type="file" accept="image/*" hidden></label>
+          <button id="avatar-delete" class="text-button">Удалить фото</button>
+          <label>Имя<input id="my-name" maxlength="64"></label>
+          <button id="save-profile" class="primary">Сохранить</button>
+          <p id="profile-error" class="error" role="alert"></p>
+        </div>
+        <button id="logout" class="danger-button">Выйти из аккаунта</button>
+      </section>
+    </section>
+
+    <section id="call-screen" class="screen call-screen hidden">
+      <div class="call-top"><span id="call-state">Вызов</span><span id="call-kind">Аудио</span></div>
+      <div id="call-peer" class="call-peer">Абонент</div>
+      <div class="video-stage">
+        <video id="remote-video" autoplay playsinline></video>
+        <video id="local-video" autoplay muted playsinline></video>
+        <div id="video-placeholder" class="video-placeholder">Кукуха</div>
+      </div>
+      <audio id="remote-audio" autoplay></audio>
+      <div id="call-message" class="call-message">Ожидание…</div>
+      <div id="incoming-actions" class="call-actions hidden">
+        <button id="answer-audio" class="round-button answer">Ответить</button>
+        <button id="answer-video" class="round-button answer hidden">С видео</button>
+        <button id="reject-call" class="round-button reject">Отклонить</button>
+      </div>
+      <div id="active-actions" class="call-actions hidden">
+        <button id="mute-call" class="round-button" type="button" aria-label="Выключить микрофон" title="Выключить микрофон"></button>
+        <button id="camera-call" class="round-button hidden" type="button" aria-label="Выключить камеру" title="Выключить камеру"></button>
+        <button id="hangup-call" class="round-button reject" type="button" aria-label="Завершить вызов" title="Завершить вызов"></button>
+      </div>
+    </section>
+    <div id="toast" class="toast hidden" role="status"></div>
+  </main>
+  <script src="app.js" defer></script>
+</body>
+</html>
