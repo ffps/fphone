@@ -86,18 +86,23 @@ function makeId() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return 'web-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 }
+
 function show(id) { $(id).classList.remove('hidden'); }
+
 function hide(id) { $(id).classList.add('hidden'); }
+
 function toast(message) {
   $('toast').textContent = message;
   show('toast');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => hide('toast'), 3000);
 }
+
 function setConnection(text, kind = '') {
   $('connection-state').textContent = text;
   $('connection-state').className = 'connection ' + kind;
 }
+
 // Send an authenticated API request.
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -113,6 +118,7 @@ async function api(path, options = {}) {
   if (!response.ok) throw new Error(data?.error?.code || `Ошибка сервера (${response.status})`);
   return data;
 }
+
 async function loadAvatar(id, version, image) {
   try {
     const response = await fetch(`/api/v1/users/${id}/avatar?v=${version || 0}`, {headers:{Authorization:'Bearer ' + state.token}});
@@ -142,16 +148,19 @@ $('login-form').addEventListener('submit', async event => {
   } catch (error) { $('login-error').textContent = loginError(error.message); }
   finally { button.disabled = false; }
 });
+
 function deviceName() {
   const ua = navigator.userAgent;
   if (/iPhone/i.test(ua)) return 'iPhone';
   if (/iPad/i.test(ua)) return 'iPad';
   return 'Браузер';
 }
+
 function loginError(code) {
   const errors = {invalid_credentials:'Неверный логин или пароль',rate_limited:'Слишком много попыток. Попробуйте позже.',network:'Нет связи с сервером',bad_request:'Проверьте логин и пароль'};
   return errors[code] || code;
 }
+
 function enterApp() {
   hide('login-screen'); show('main-screen');
   $('top-title').textContent = 'Контакты';
@@ -162,6 +171,7 @@ function enterApp() {
 function historyKey() {
   return 'kukukha.history.' + (state.user?.id || 'unknown');
 }
+
 function loadHistory() {
   try {
     const rows = JSON.parse(localStorage.getItem(historyKey()) || '[]');
@@ -170,6 +180,7 @@ function loadHistory() {
     return [];
   }
 }
+
 // Read calls received by the Service Worker while this page was closed.
 async function syncPendingPushHistory() {
   if (!state.user?.id || !('indexedDB' in window)) return;
@@ -216,6 +227,7 @@ async function syncPendingPushHistory() {
     console.warn('Pending push history:', error);
   }
 }
+
 function openPendingPushDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open('kukukha-push', 1);
@@ -224,6 +236,7 @@ function openPendingPushDB() {
     request.onerror = () => reject(request.error);
   });
 }
+
 function deletePendingPush(db, call) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('pending', 'readwrite');
@@ -233,6 +246,7 @@ function deletePendingPush(db, call) {
     tx.onabort = () => reject(tx.error);
   });
 }
+
 async function clearPendingPush(call) {
   if (!call || !('indexedDB' in window)) return;
   try {
@@ -241,6 +255,7 @@ async function clearPendingPush(call) {
     db.close();
   } catch (_) {}
 }
+
 function saveHistory(call, reason) {
   if (!call || call.historyRecorded) return;
   call.historyRecorded = true;
@@ -262,6 +277,7 @@ function saveHistory(call, reason) {
   renderHistory();
   renderContacts();
 }
+
 function renderHistory() {
   const list = $('history-list');
   if (!list) return;
@@ -305,6 +321,7 @@ function renderHistory() {
     list.append(row);
   }
 }
+
 function historyResult(item) {
   if (item.reason === 'missed' || item.reason === 'no_answer' && !item.outgoing) return 'Пропущен';
   if (item.reason === 'rejected' || item.reason === 'declined') return 'Отклонён';
@@ -315,6 +332,7 @@ function historyResult(item) {
   if (item.reason === 'answered_elsewhere') return 'Ответили на другом устройстве';
   return item.outgoing ? 'Исходящий' : 'Входящий';
 }
+
 function formatHistoryDate(timestamp) {
   const date = new Date(timestamp);
   const today = new Date();
@@ -324,26 +342,45 @@ function formatHistoryDate(timestamp) {
   const label = sameDay(date, today) ? 'Сегодня' : sameDay(date, yesterday) ? 'Вчера' : date.toLocaleDateString('ru-RU', {day:'2-digit',month:'2-digit'});
   return label + ', ' + date.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
 }
+
 function formatDuration(seconds) {
   const minutes = Math.floor(seconds / 60);
   return minutes ? minutes + ':' + String(seconds % 60).padStart(2, '0') : seconds + ' с';
 }
+
 function showMainTab(tab) {
   const history = tab === 'history';
-  show(history ? 'history-view' : 'contacts-view');
-  hide(history ? 'contacts-view' : 'history-view');
-  $('tab-history').classList.toggle('selected', history);
-  $('tab-contacts').classList.toggle('selected', !history);
-  $('top-title').textContent = history ? 'Недавние' : 'Контакты';
-  if (history) renderHistory();
+  if (history) {
+   show('history-view');
+   show('clear-history');
+   hide('contacts-view');
+   hide('refresh-contacts');
+   $('tab-history').classList.add('selected');
+   $('tab-contacts').classList.remove('selected');
+   $('top-title').textContent('Недавние');
+   renderHistory();
+  }
+  else {
+   show('contacts-view');
+   show('refresh-contacts');
+   hide('history-view');
+   hide('clear-history');
+   $('tab-history').classList.remove('selected');
+   $('tab-contacts').classList.add('selected');
+   $('top-title').textContent('Контакты');
+  }
 }
+
 $('tab-contacts').addEventListener('click', () => showMainTab('contacts'));
+
 $('tab-history').addEventListener('click', () => showMainTab('history'));
+
 $('clear-history').addEventListener('click', () => {
   if (!confirm('Очистить историю звонков?')) return;
   localStorage.removeItem(historyKey());
   renderHistory();
 });
+
 function logoutLocal() {
   endCall(false, 'cancelled');
   state.token = ''; state.user = null;
@@ -352,6 +389,7 @@ function logoutLocal() {
   state.ws = null;
   hide('main-screen'); hide('call-screen'); show('login-screen');
 }
+
 $('logout').addEventListener('click', async () => {
   try { await api('/logout', {method:'POST'}); } catch (_) {}
   logoutLocal();
@@ -365,6 +403,7 @@ async function loadContacts() {
     renderContacts();
   } catch (error) { toast(error.message); }
 }
+
 $('refresh-contacts').addEventListener('click', loadContacts);
 function renderContacts() {
   const list = $('contacts-list'); list.replaceChildren();
@@ -410,13 +449,24 @@ async function loadProfile() {
     await loadAvatar(data.user.id, data.avatar, $('my-avatar'));
   } catch (error) { toast(error.message); }
 }
+
 $('settings-open').addEventListener('click', () => {
-  hide('contacts-view'); hide('history-view'); hide('main-tabs');
-  show('settings-view'); $('top-title').textContent = 'Настройки'; loadProfile(); updatePushStatus();
+  if ($('settings-view').classList.contains('hidden')) {
+    hide('contacts-view'); hide('history-view'); hide('main-tabs');
+    show('settings-view'); $('top-title').textContent = 'Настройки';
+    hide('refresh-contacts');
+    hide('clear-history');
+    loadProfile();
+    updatePushStatus();
+  }
+  else {
+    hide('settings-view');
+    show('main-tabs');
+    showMainTab('contacts');
+  }
+
 });
-$('settings-close').addEventListener('click', () => {
-  hide('settings-view'); show('main-tabs'); showMainTab('contacts');
-});
+
 $('save-profile').addEventListener('click', async () => {
   $('profile-error').textContent = '';
   try {
@@ -425,6 +475,7 @@ $('save-profile').addEventListener('click', async () => {
     state.user = data.user; toast('Имя сохранено');
   } catch (error) { $('profile-error').textContent = error.message === 'name_taken' ? 'Это имя уже используется' : error.message; }
 });
+
 $('avatar-file').addEventListener('change', async event => {
   const file = event.target.files?.[0]; if (!file) return;
   try {
@@ -434,10 +485,12 @@ $('avatar-file').addEventListener('change', async event => {
   } catch (error) { toast(error.message); }
   event.target.value = '';
 });
+
 $('avatar-delete').addEventListener('click', async () => {
   try { await api('/me/avatar', {method:'DELETE'}); await loadProfile(); toast('Фото удалено'); }
   catch (error) { toast(error.message); }
 });
+
 function toJpeg(file) {
   return new Promise((resolve, reject) => {
     const image = new Image(); const url = URL.createObjectURL(file);
@@ -472,10 +525,12 @@ function connectSocket() {
   });
   ws.addEventListener('error', () => setConnection('Нет связи с сервером', 'offline'));
 }
+
 function send(message) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
   state.ws.send(JSON.stringify(message)); return true;
 }
+
 function handleSocketMessage(message) {
   switch (message.t) {
     case 'auth.ok':
@@ -524,10 +579,12 @@ function handleSocketMessage(message) {
     case 'pong': break;
   }
 }
+
 function endReason(reason) {
   const map = {busy:'Абонент занят',offline:'Абонент недоступен',rejected:'Вызов отклонён',cancelled:'Вызов отменён',hangup:'Вызов завершён',no_answer:'Нет ответа',answered_elsewhere:'Ответили на другом устройстве',gone:'Вызов уже завершён'};
   return map[reason] || 'Вызов завершён';
 }
+
 function handleServerError(message) {
   const map = {server_busy:'Сервер занят',already_in_call:'Вы уже участвуете в другом вызове',unknown_user:'Абонент не найден',busy:'Абонент занят',offline:'Абонент недоступен'};
   toast(map[message.code] || message.code || 'Ошибка сервера');
@@ -554,6 +611,7 @@ async function startCall(contact, media) {
     endCall(false, 'failed');
   }
 }
+
 // Show a new incoming call.
 function incomingCall(message) {
   const call = message.call;
@@ -567,6 +625,7 @@ function incomingCall(message) {
   show('incoming-actions'); hide('active-actions');
   $('answer-video').classList.toggle('hidden', call.media !== 'video');
 }
+
 function showCallScreen() {
   $('hangup-call').disabled = false;
   hide('main-screen'); show('call-screen');
@@ -576,11 +635,13 @@ function showCallScreen() {
   resetPreviewPosition();
   $('video-placeholder').classList.remove('hidden');
 }
+
 function resetPreviewPosition() {
   const preview = $('local-video');
   preview.style.left = 'auto'; preview.style.top = '12px';
   preview.style.right = '12px'; preview.style.bottom = 'auto';
 }
+
 (function enablePreviewDrag() {
   const preview = $('local-video');
   let drag = null;
@@ -608,8 +669,11 @@ function resetPreviewPosition() {
 })();
 
 $('answer-audio').addEventListener('click', () => acceptCall(false));
+
 $('answer-video').addEventListener('click', () => acceptCall(true));
+
 $('reject-call').addEventListener('click', () => { if (state.call) send({t:'call.reject', call:state.call.id}); endCall(false, 'rejected'); });
+
 async function acceptCall(withVideo) {
   if (!state.call || state.call.outgoing) return;
   stopCallTone();
@@ -627,6 +691,7 @@ async function acceptCall(withVideo) {
     if (state.call?.state === 'incoming') startCallTone('incoming');
   }
 }
+
 async function createPeerAndOffer() {
   try {
     if (!state.localStream) await startMedia(state.call.media === 'video');
@@ -639,6 +704,7 @@ async function createPeerAndOffer() {
     show('active-actions'); updateCallButtons();
   } catch (error) { toast('Не удалось начать звонок: ' + error.message); send({t:'call.hangup', call:state.call.id}); endCall(false); }
 }
+
 // Ask for microphone and camera access.
 async function startMedia(withVideo) {
   if (!state.localStream) {
@@ -654,6 +720,7 @@ async function startMedia(withVideo) {
   }
   updateCallButtons();
 }
+
 function addLocalTracks() {
   if (!state.pc || !state.localStream) return;
   for (const track of state.localStream.getTracks()) {
@@ -662,6 +729,7 @@ function addLocalTracks() {
     }
   }
 }
+
 async function createPeer() {
   if (state.pc) return;
   state.pc = new RTCPeerConnection(rtcConfig(state.call.ice));
@@ -696,11 +764,13 @@ async function createPeer() {
     if (state.pc?.iceConnectionState === 'checking') $('call-message').textContent = 'Поиск соединения…';
   };
 }
+
 function rtcConfig(ice) {
   const servers = ice?.servers || [];
   return {iceServers:servers, iceTransportPolicy:ice?.policy === 'relay' ? 'relay' : 'all'};
 }
 // Apply signaling messages from the other caller.
+
 async function handleSignal(message) {
   if (!state.call || state.call.id !== message.call) return;
   try {
@@ -722,11 +792,13 @@ async function handleSignal(message) {
     }
   } catch (error) { console.error('WebRTC signal error', error); toast('Ошибка согласования звонка'); }
 }
+
 $('mute-call').addEventListener('click', () => {
   state.muted = !state.muted;
   state.localStream?.getAudioTracks().forEach(track => track.enabled = !state.muted);
   updateCallButtons();
 });
+
 $('camera-call').addEventListener('click', () => {
   if (state.call?.media !== 'video') return;
   state.cameraOn = !state.cameraOn;
@@ -735,6 +807,7 @@ $('camera-call').addEventListener('click', () => {
   if (state.call.id) send({t:'call.signal',call:state.call.id,kind:'camera',enabled:state.cameraOn});
   updateCallButtons();
 });
+
 function updateCallButtons() {
   const mute = $('mute-call');
   mute.classList.toggle('hidden', !state.call || state.call.state === 'incoming');
@@ -748,6 +821,7 @@ function updateCallButtons() {
   $('hangup-call').title = 'Отбой';
   $('hangup-call').setAttribute('aria-label', 'Отбой');
 }
+
 $('hangup-call').addEventListener('click', () => {
   if (!state.call) return;
   if (state.call.outgoing && !state.call.id) {
@@ -759,6 +833,7 @@ $('hangup-call').addEventListener('click', () => {
   if (state.call.id) send({t:'call.hangup',call:state.call.id});
   endCall(false, state.call.outgoing && state.call.state === 'calling' ? 'cancelled' : 'hangup');
 });
+
 function endCall(showMain = true, reason = 'hangup') {
   stopCallTone();
   saveHistory(state.call, reason);
@@ -776,8 +851,11 @@ function endCall(showMain = true, reason = 'hangup') {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.token && (!state.ws || state.ws.readyState > WebSocket.OPEN)) connectSocket();
 });
+
 window.addEventListener('online', () => { if (state.token) connectSocket(); });
+
 let swRegistration = null;
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'})
     .then(registration => {
@@ -789,7 +867,9 @@ if ('serviceWorker' in navigator) {
 
 // Ask for notification permission only after the user presses the button.
 $('push-enable').addEventListener('click', enableWebPush);
+
 $('push-disable').addEventListener('click', disableWebPush);
+
 async function updatePushStatus() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     $('push-status').textContent = 'Этот браузер не поддерживает Web Push';
@@ -808,6 +888,7 @@ async function updatePushStatus() {
     $('push-status').textContent = 'Не удалось проверить уведомления';
   }
 }
+
 async function syncExistingPushSubscription() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window) || Notification.permission !== 'granted') return;
   try {
@@ -822,10 +903,12 @@ async function syncExistingPushSubscription() {
     console.warn('Web Push subscription sync:', error);
   }
 }
+
 function decodeVapidKey(value) {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
   return Uint8Array.from(atob(padded), char => char.charCodeAt(0));
 }
+
 async function enableWebPush() {
   try {
     if (!('Notification' in window)) throw new Error('Web Push не поддерживается');
@@ -849,6 +932,7 @@ async function enableWebPush() {
     updatePushStatus();
   }
 }
+
 async function disableWebPush() {
   try {
     const registration = swRegistration || await navigator.serviceWorker.ready;
@@ -861,7 +945,9 @@ async function disableWebPush() {
   }
   updatePushStatus();
 }
+
 if (state.token) {
   api('/me').then(data => { state.user = data.user; enterApp(); }).catch(() => {});
 }
+
 setInterval(() => { if (state.ws?.readyState === WebSocket.OPEN) send({t:'ping'}); }, 20000);
