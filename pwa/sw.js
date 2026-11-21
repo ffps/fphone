@@ -1,4 +1,4 @@
-const CACHE = 'kukukha-pwa-v3';
+const CACHE = 'kukukha-pwa-v7';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)));
@@ -12,8 +12,12 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/ws') return;
   event.respondWith(fetch(event.request).then(response => {
-    if (response.ok && url.pathname.startsWith('/pwa/')) caches.open(CACHE).then(cache => cache.put(event.request, response.clone()));
-    return response;
+    if (!response.ok || !url.pathname.startsWith('/pwa/')) return response;
+    const copy = response.clone();
+    return caches.open(CACHE)
+      .then(cache => cache.put(event.request, copy))
+      .catch(error => console.warn('PWA cache:', error))
+      .then(() => response);
   }).catch(() => caches.match(event.request).then(cached => cached || (event.request.mode === 'navigate' ? caches.match('./index.html') : Response.error()))));
 });
 
@@ -86,7 +90,8 @@ self.addEventListener('push', event => {
       }
       return;
     }
-    if (data.type !== 'call.incoming') return;
+    if (data.type !== 'call.incoming' || !data.call) return;
+    if (Number(data.exp) > 0 && Number(data.exp) * 1000 <= Date.now()) return;
     try {
       const old = await readPushRecord(data.call);
       if (old?.cancelled) return;
@@ -101,6 +106,9 @@ self.addEventListener('push', event => {
       tag: 'call-' + data.call,
       renotify: true,
       requireInteraction: true,
+      silent: false,
+      vibrate: [400, 200, 400, 800],
+      timestamp: Date.now(),
       data: {call: data.call}
     });
   })());

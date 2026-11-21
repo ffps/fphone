@@ -377,6 +377,9 @@ input:focus {
   height: 26px;
   fill: currentColor;
 }
+.round-button .phone-down {
+  transform: rotate(135deg);
+}
 .round-button.answer {
   background: #23864e;
 }
@@ -474,6 +477,23 @@ input:focus {
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.history-call {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #23864e;
+  color: #fff;
+}
+.history-call svg {
+  width: 21px;
+  height: 21px;
+  fill: currentColor;
 }
 
 .push-settings {

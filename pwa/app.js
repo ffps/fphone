@@ -17,6 +17,71 @@ const state = {
 };
 localStorage.setItem('kukukha.device', state.deviceId);
 
+let callAudioContext = null;
+let callToneTimer = 0;
+let callToneNodes = null;
+let callToneMode = '';
+let callToneStartedAt = 0;
+
+function unlockCallAudio() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!callAudioContext) callAudioContext = new AudioContextClass();
+    if (callAudioContext.state === 'suspended') callAudioContext.resume().catch(() => {});
+  } catch (_) {}
+}
+
+document.addEventListener('pointerdown', unlockCallAudio, {passive:true});
+document.addEventListener('keydown', unlockCallAudio);
+
+function stopCallTone() {
+  clearInterval(callToneTimer);
+  callToneTimer = 0;
+  callToneMode = '';
+  if (callToneNodes) {
+    try { callToneNodes.gain.gain.setTargetAtTime(0, callAudioContext.currentTime, 0.04); } catch (_) {}
+    try { callToneNodes.oscillators.forEach(node => node.stop()); } catch (_) {}
+    callToneNodes = null;
+  }
+}
+
+function startCallTone(mode) {
+  if (callToneMode === mode && callToneNodes) return;
+  stopCallTone();
+  unlockCallAudio();
+  if (!callAudioContext || callAudioContext.state !== 'running') return;
+  try {
+    const gain = callAudioContext.createGain();
+    gain.gain.value = 0;
+    gain.connect(callAudioContext.destination);
+    const frequencies = mode === 'incoming' ? [440, 480] : [440];
+    const oscillators = frequencies.map(frequency => {
+      const oscillator = callAudioContext.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gain);
+      oscillator.start();
+      return oscillator;
+    });
+    callToneNodes = {gain, oscillators};
+    callToneMode = mode;
+    callToneStartedAt = Date.now();
+    const update = () => {
+      if (!callToneNodes || !callAudioContext || callAudioContext.state !== 'running') return;
+      const elapsed = Date.now() - callToneStartedAt;
+      const on = mode === 'incoming' ? elapsed % 6000 < 2000 : elapsed % 4000 < 1000;
+      const target = on ? (mode === 'incoming' ? 0.10 : 0.07) : 0;
+      callToneNodes.gain.gain.setTargetAtTime(target, callAudioContext.currentTime, 0.035);
+    };
+    update();
+    callToneTimer = setInterval(update, 100);
+  } catch (error) {
+    console.warn('Call tone:', error);
+    stopCallTone();
+  }
+}
+
 function makeId() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return 'web-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
@@ -223,6 +288,20 @@ function renderHistory() {
     duration.className = 'history-duration';
     duration.textContent = item.duration ? formatDuration(item.duration) : '';
     row.append(icon, info, duration);
+    if (Number(item.peerId) > 0) {
+      const call = document.createElement('button');
+      call.className = 'history-call';
+      call.type = 'button';
+      call.innerHTML = ICON_CALL;
+      call.title = item.media === 'video' ? 'Повторить видеозвонок' : 'Повторить аудиозвонок';
+      call.setAttribute('aria-label', call.title);
+      call.addEventListener('click', () => startCall({
+        id: Number(item.peerId),
+        name: item.peerName || item.peerLogin || 'Абонент',
+        login: item.peerLogin || ''
+      }, item.media === 'video' ? 'video' : 'audio'));
+      row.append(call);
+    }
     list.append(row);
   }
 }
@@ -420,11 +499,18 @@ function handleSocketMessage(message) {
         break;
       }
       $('call-state').textContent = 'Вызов'; $('call-message').textContent = 'Вызов абонента…';
+      startCallTone('ringback');
       break;
     case 'call.incoming': incomingCall(message); break;
-    case 'call.ringing': if (state.call?.id === message.call) $('call-message').textContent = 'Ожидание ответа…'; break;
+    case 'call.ringing':
+      if (state.call?.id === message.call) {
+        $('call-message').textContent = 'Ожидание ответа…';
+        if (state.call.outgoing) startCallTone('ringback');
+      }
+      break;
     case 'call.accepted':
       if (state.call?.id === message.call) {
+        stopCallTone();
         state.call.state = 'connecting';
         if (state.call.outgoing) createPeerAndOffer();
         else $('call-message').textContent = 'Соединение…';
@@ -448,15 +534,25 @@ function handleServerError(message) {
   if (message.ref === 'call.invite' && state.call) endCall(false, message.code || 'failed');
 }
 
-function startCall(contact, media) {
+async function startCall(contact, media) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) { toast('Нет связи с сервером'); return; }
   if (state.call) return;
+  state.muted = false;
+  state.cameraOn = media === 'video';
   state.call = {id:'', peerId:contact.id, peerName:contact.name || contact.login, peerLogin:contact.login, media, outgoing:true, state:'calling', ice:null, startedAt:Date.now()};
   showCallScreen();
-  $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Вызов абонента…';
-  show('active-actions'); updateCallButtons();
+  $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Подготовка устройств…';
   $('call-kind').textContent = media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
-  send({t:'call.invite', to:Number(contact.id), media});
+  show('active-actions'); updateCallButtons();
+  try {
+    await startMedia(media === 'video');
+    if (!state.call) return;
+    $('call-message').textContent = 'Вызов абонента…';
+    send({t:'call.invite', to:Number(contact.id), media});
+  } catch (error) {
+    toast('Не удалось включить микрофон или камеру: ' + error.message);
+    endCall(false, 'failed');
+  }
 }
 // Show a new incoming call.
 function incomingCall(message) {
@@ -464,6 +560,7 @@ function incomingCall(message) {
   if (state.call && state.call.id !== call.id) { send({t:'call.reject', call:call.id}); return; }
   state.call = {id:call.id, peerId:call.peer.id, peerName:call.peer.name, media:call.media, outgoing:false, state:'incoming', ice:message.ice, startedAt:Date.now()};
   send({t:'call.ringing', call:call.id});
+  startCallTone('incoming');
   showCallScreen();
   $('call-state').textContent = 'Входящий вызов'; $('call-message').textContent = 'Вам звонят';
   $('call-kind').textContent = call.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
@@ -515,19 +612,26 @@ $('answer-video').addEventListener('click', () => acceptCall(true));
 $('reject-call').addEventListener('click', () => { if (state.call) send({t:'call.reject', call:state.call.id}); endCall(false, 'rejected'); });
 async function acceptCall(withVideo) {
   if (!state.call || state.call.outgoing) return;
+  stopCallTone();
+  state.muted = false;
+  state.cameraOn = withVideo && state.call.media === 'video';
   try {
-    await startMedia(withVideo && state.call.media === 'video');
+    await startMedia(state.cameraOn);
     state.call.state = 'connecting';
     send({t:'call.accept', call:state.call.id});
     hide('incoming-actions'); show('active-actions');
     $('call-state').textContent = 'Соединение'; $('call-message').textContent = 'Соединение…';
     updateCallButtons();
-  } catch (error) { toast('Нет доступа к микрофону или камере: ' + error.message); }
+  } catch (error) {
+    toast('Нет доступа к микрофону или камере: ' + error.message);
+    if (state.call?.state === 'incoming') startCallTone('incoming');
+  }
 }
 async function createPeerAndOffer() {
   try {
-    await startMedia(state.call.media === 'video');
+    if (!state.localStream) await startMedia(state.call.media === 'video');
     await createPeer();
+    addLocalTracks();
     const offer = await state.pc.createOffer();
     await state.pc.setLocalDescription(offer);
     send({t:'call.signal', call:state.call.id, kind:'offer', sdp:offer.sdp});
@@ -537,12 +641,26 @@ async function createPeerAndOffer() {
 }
 // Ask for microphone and camera access.
 async function startMedia(withVideo) {
-  const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
-  state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-  $('local-video').srcObject = withVideo ? state.localStream : null;
-  state.cameraOn = withVideo;
-  await createPeer();
-  for (const track of state.localStream.getTracks()) state.pc.addTrack(track, state.localStream);
+  if (!state.localStream) {
+    const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
+    state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+  }
+  state.localStream.getAudioTracks().forEach(track => track.enabled = !state.muted);
+  state.localStream.getVideoTracks().forEach(track => track.enabled = state.cameraOn);
+  $('local-video').srcObject = state.cameraOn ? state.localStream : null;
+  if (state.call?.ice) {
+    await createPeer();
+    addLocalTracks();
+  }
+  updateCallButtons();
+}
+function addLocalTracks() {
+  if (!state.pc || !state.localStream) return;
+  for (const track of state.localStream.getTracks()) {
+    if (!state.pc.getSenders().some(sender => sender.track?.id === track.id)) {
+      state.pc.addTrack(track, state.localStream);
+    }
+  }
 }
 async function createPeer() {
   if (state.pc) return;
@@ -610,19 +728,20 @@ $('mute-call').addEventListener('click', () => {
   updateCallButtons();
 });
 $('camera-call').addEventListener('click', () => {
-  if (!state.localStream?.getVideoTracks().length) { toast('Камера не включена для этого звонка'); return; }
+  if (state.call?.media !== 'video') return;
   state.cameraOn = !state.cameraOn;
-  state.localStream.getVideoTracks().forEach(track => track.enabled = state.cameraOn);
-  send({t:'call.signal',call:state.call.id,kind:'camera',enabled:state.cameraOn});
+  state.localStream?.getVideoTracks().forEach(track => track.enabled = state.cameraOn);
+  $('local-video').srcObject = state.cameraOn ? state.localStream : null;
+  if (state.call.id) send({t:'call.signal',call:state.call.id,kind:'camera',enabled:state.cameraOn});
   updateCallButtons();
 });
 function updateCallButtons() {
   const mute = $('mute-call');
-  mute.classList.toggle('hidden', !state.localStream);
+  mute.classList.toggle('hidden', !state.call || state.call.state === 'incoming');
   mute.innerHTML = state.muted ? ICON_MIC_OFF : ICON_MIC;
   mute.title = state.muted ? 'Включить микрофон' : 'Выключить микрофон'; mute.setAttribute('aria-label', mute.title);
   const camera = $('camera-call');
-  camera.classList.toggle('hidden', state.call?.media !== 'video' || !state.localStream?.getVideoTracks().length);
+  camera.classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video');
   camera.innerHTML = state.cameraOn ? ICON_CAMERA : ICON_CAMERA_OFF;
   camera.title = state.cameraOn ? 'Выключить камеру' : 'Включить камеру'; camera.setAttribute('aria-label', camera.title);
   $('hangup-call').innerHTML = ICON_HANGUP;
@@ -641,6 +760,7 @@ $('hangup-call').addEventListener('click', () => {
   endCall(false, state.call.outgoing && state.call.state === 'calling' ? 'cancelled' : 'hangup');
 });
 function endCall(showMain = true, reason = 'hangup') {
+  stopCallTone();
   saveHistory(state.call, reason);
   if (state.pc) { state.pc.ontrack = null; state.pc.onicecandidate = null; state.pc.onconnectionstatechange = null; state.pc.close(); }
   state.pc = null;
@@ -659,8 +779,11 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', () => { if (state.token) connectSocket(); });
 let swRegistration = null;
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js')
-    .then(registration => { swRegistration = registration; })
+  navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'})
+    .then(registration => {
+      swRegistration = registration;
+      registration.update().catch(error => console.warn('Service worker update:', error));
+    })
     .catch(error => console.warn('Service worker:', error));
 }
 
