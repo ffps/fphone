@@ -11,7 +11,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -44,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.pointerInput
 import app.fphone.CallActivity
 import app.fphone.CallManager
 import app.fphone.Notifications
@@ -171,7 +174,28 @@ fun MainScreen(
                 }
             }
         ) { padding ->
-            Column(Modifier.padding(padding)) {
+            Column(
+                Modifier.fillMaxSize()
+                    .padding(padding)
+                    .pointerInput(tab) {
+                        var horizontalDistance = 0f
+                        val swipeThreshold = 72.dp.toPx()
+                        detectHorizontalDragGestures(
+                            onHorizontalDrag = { change, dragAmount ->
+                                horizontalDistance += dragAmount
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                when {
+                                    horizontalDistance < -swipeThreshold && tab == 0 -> tab = 1
+                                    horizontalDistance > swipeThreshold && tab == 1 -> tab = 0
+                                }
+                                horizontalDistance = 0f
+                            },
+                            onDragCancel = { horizontalDistance = 0f }
+                        )
+                    }
+            ) {
                 // A call is going on: return to it or end it.
                 val active = calls.call
                 var showCallBanner by remember { mutableStateOf(false) }
