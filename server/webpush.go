@@ -257,8 +257,10 @@ func encryptWebPush(clientKey, authKey string, payload []byte) ([]byte, error) {
 		return nil, err
 	}
 	prk := hkdfExtract(salt, ikm)
-	cek := hkdfExpand(prk, []byte("Content-Encoding: aes128gcm"), 16)
-	nonce := hkdfExpand(prk, []byte("Content-Encoding: nonce"), 12)
+
+    cek := hkdfExpand(prk, []byte("Content-Encoding: aes128gcm\x00"), 16)
+    nonce := hkdfExpand(prk, []byte("Content-Encoding: nonce\x00"), 12)
+
 	block, err := aes.NewCipher(cek)
 	if err != nil {
 		return nil, err
