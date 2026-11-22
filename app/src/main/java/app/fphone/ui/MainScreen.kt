@@ -3,6 +3,10 @@
 package app.fphone.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -248,10 +252,24 @@ fun MainScreen(
                     }
                 }
 
-                if (tab == 0) {
-                    ContactsTab(onCall = onCall)
-                } else {
-                    RecentsTab(onCall = onCall)
+                AnimatedContent(
+                    targetState = tab,
+                    label = "main_tabs",
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            slideInHorizontally { width -> width } togetherWith
+                                slideOutHorizontally { width -> -width }
+                        } else {
+                            slideInHorizontally { width -> -width } togetherWith
+                                slideOutHorizontally { width -> width }
+                        }
+                    }
+                ) { targetTab ->
+                    if (targetTab == 0) {
+                        ContactsTab(onCall = onCall)
+                    } else {
+                        RecentsTab(onCall = onCall)
+                    }
                 }
             }
         }
