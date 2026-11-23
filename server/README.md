@@ -329,4 +329,4 @@ sudo systemctl start fphone
 
 ## Лицензия
 
-Код написан Claude (Anthropic) free. Лицензия: свободное использование.
+Код написан ChatGPT (OpenAI) free. Лицензия: свободное использование.
