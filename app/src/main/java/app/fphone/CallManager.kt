@@ -5,7 +5,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioDeviceInfo
-import android.media.ToneGenerator
+import android.media.AudioTrack
+import android.media.AudioFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -96,7 +97,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private var restarts = 0
     private var audioStarted = false
     private var audioFocus: AudioFocusRequest? = null
-    private var ringback: ToneGenerator? = null
+    private var ringback: AudioTrack? = null
     private var frontCameraWanted = true
     private var pushSyncing = false
     private var refreshingFcm = false
@@ -241,15 +242,60 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private fun startRingback() {
         stopRingback()
         try {
-            ringback = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 100).also {
-                it.startTone(ToneGenerator.TONE_SUP_RINGTONE)
+            // 425 Hz tone: 1 second on, 4 seconds off.
+            val sampleRate = 44_100
+            val toneFrames = sampleRate
+            val cycleFrames = sampleRate * 5
+            val samples = ShortArray(cycleFrames)
+            val fadeFrames = sampleRate / 100 // 10 ms
+
+            for (i in 0 until toneFrames) {
+                val fadeIn = minOf(1.0, i.toDouble() / fadeFrames)
+                val fadeOut = minOf(1.0, (toneFrames - 1 - i).toDouble() / fadeFrames)
+                val envelope = minOf(fadeIn, fadeOut)
+                val wave = kotlin.math.sin(2.0 * Math.PI * 425.0 * i / sampleRate)
+                samples[i] = (wave * envelope * 0.65 * Short.MAX_VALUE).toInt().toShort()
             }
-            MessageLog.add(app, "CALL", "local ringback tone started")
-        } catch (e: Exception) { MessageLog.add(app, "CALL", "ringback tone unavailable: $e") }
+
+            val track = AudioTrack(
+                AudioManager.STREAM_VOICE_CALL,
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                samples.size * 2,
+                AudioTrack.MODE_STATIC
+            )
+
+            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                track.release()
+                throw IllegalStateException("AudioTrack initialization failed")
+            }
+
+            val written = track.write(samples, 0, samples.size)
+            if (written != samples.size) {
+                track.release()
+                throw IllegalStateException("AudioTrack wrote $written of ${samples.size} samples")
+            }
+
+            val loopResult = track.setLoopPoints(0, samples.size, -1)
+            if (loopResult != AudioTrack.SUCCESS) {
+                track.release()
+                throw IllegalStateException("AudioTrack loop setup failed: $loopResult")
+            }
+
+            track.play()
+            ringback = track
+            MessageLog.add(app, "CALL", "local ringback AudioTrack started")
+        } catch (e: Exception) {
+            MessageLog.add(app, "CALL", "ringback tone unavailable: $e")
+        }
     }
 
     private fun stopRingback() {
-        try { ringback?.stopTone(); ringback?.release() } catch (_: Exception) { }
+        try {
+            ringback?.stop()
+            ringback?.release()
+        } catch (_: Exception) { }
         ringback = null
     }
 
