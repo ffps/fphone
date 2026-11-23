@@ -1,4 +1,4 @@
-const CACHE = 'kukukha-pwa-v8';
+const CACHE = 'kukukha-pwa-v15';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)));

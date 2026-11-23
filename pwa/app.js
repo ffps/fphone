@@ -17,69 +17,141 @@ const state = {
 };
 localStorage.setItem('kukukha.device', state.deviceId);
 
-let callAudioContext = null;
-let callToneTimer = 0;
-let callToneNodes = null;
+let callToneAudio = null;
 let callToneMode = '';
-let callToneStartedAt = 0;
+let callToneRequestedMode = '';
+let callToneUrls = null;
+let callToneUnlocking = false;
+let callToneUnlocked = false;
+let callToneManualStop = false;
 
-function unlockCallAudio() {
-  try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    if (!callAudioContext) callAudioContext = new AudioContextClass();
-    if (callAudioContext.state === 'suspended') callAudioContext.resume().catch(() => {});
-  } catch (_) {}
+function makeToneWavUrl(mode) {
+  const sampleRate = 22050;
+  const duration = mode === 'incoming' ? 6 : 4;
+  const samples = sampleRate * duration;
+  const buffer = new ArrayBuffer(44 + samples * 2);
+  const view = new DataView(buffer);
+  const writeText = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
+  writeText(0, 'RIFF'); view.setUint32(4, 36 + samples * 2, true); writeText(8, 'WAVE');
+  writeText(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeText(36, 'data'); view.setUint32(40, samples * 2, true);
+  for (let i = 0; i < samples; i++) {
+    const t = i / sampleRate;
+    const cycle = mode === 'incoming' ? 6 : 4;
+    const onDuration = mode === 'incoming' ? 2 : 1;
+    const phase = t % cycle;
+    let sample = 0;
+    if (phase < onDuration) {
+      const edge = Math.min(1, phase / 0.008, (onDuration - phase) / 0.008);
+      const envelope = Math.max(0, edge);
+      const tone = mode === 'incoming'
+        ? (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.10
+        : Math.sin(2 * Math.PI * 440 * t) * 0.20;
+      sample = tone * envelope;
+    }
+    view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([buffer], {type:'audio/wav'}));
 }
 
-document.addEventListener('pointerdown', unlockCallAudio, {passive:true});
-document.addEventListener('keydown', unlockCallAudio);
+function ensureCallToneAudio() {
+  if (callToneAudio) return callToneAudio;
+  callToneAudio = document.createElement('audio');
+  callToneAudio.preload = 'auto';
+  callToneAudio.loop = true;
+  callToneAudio.volume = 0.35;
+  callToneAudio.setAttribute('playsinline', '');
+  callToneAudio.playsInline = true;
+  callToneAudio.style.display = 'none';
+  (document.body || document.documentElement).appendChild(callToneAudio);
+  callToneUrls = {ringback:makeToneWavUrl('ringback'), incoming:makeToneWavUrl('incoming')};
+  return callToneAudio;
+}
+
+function unlockCallAudio(fromGesture = false) {
+  const audio = ensureCallToneAudio();
+  if (!fromGesture) return Promise.resolve(callToneUnlocked);
+  // Once unlocked, never replace the active ringback/incoming source on later clicks.
+  if (callToneUnlocked) {
+    return Promise.resolve(true);
+  }
+  if (callToneUnlocking) return Promise.resolve(callToneUnlocked);
+  callToneUnlocking = true;
+  // Play a silent WAV from the actual user gesture to unlock this media element.
+  if (!callToneUrls.silence) {
+    const sampleRate = 8000;
+    const buffer = new ArrayBuffer(44 + 800);
+    const view = new DataView(buffer);
+    const put = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
+    put(0,'RIFF'); view.setUint32(4,836,true); put(8,'WAVE'); put(12,'fmt '); view.setUint32(16,16,true);
+    view.setUint16(20,1,true); view.setUint16(22,1,true); view.setUint32(24,sampleRate,true); view.setUint32(28,sampleRate*2,true);
+    view.setUint16(32,2,true); view.setUint16(34,16,true); put(36,'data'); view.setUint32(40,800,true);
+    callToneUrls.silence = URL.createObjectURL(new Blob([buffer], {type:'audio/wav'}));
+  }
+  callToneManualStop = true;
+  audio.src = callToneUrls.silence;
+  audio.loop = false;
+  audio.currentTime = 0;
+  const promise = audio.play();
+  if (!promise || typeof promise.then !== 'function') {
+    callToneUnlocked = true; callToneUnlocking = false; audio.pause();
+    return Promise.resolve(true);
+  }
+  return promise.then(() => {
+    callToneUnlocked = true;
+    // Pause only if the element still contains the silent unlock clip.
+    // A call tone may already have replaced it while play() was resolving.
+    if (audio.src === callToneUrls.silence) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    return true;
+  }).catch(() => {
+    return false;
+  }).finally(() => {
+    callToneUnlocking = false;
+    callToneManualStop = false;
+  });
+}
+
+document.addEventListener('pointerdown', () => unlockCallAudio(true), {passive:true});
+document.addEventListener('keydown', () => unlockCallAudio(true));
+
+function playCallTone(mode) {
+  if (!callToneRequestedMode || callToneRequestedMode !== mode) return;
+  const audio = ensureCallToneAudio();
+  if (callToneMode === mode && !audio.paused) {
+    return;
+  }
+  try {
+    callToneMode = mode;
+    callToneManualStop = false;
+    audio.src = callToneUrls[mode];
+    audio.loop = true;
+    audio.currentTime = 0;
+    const result = audio.play();
+    if (result && typeof result.then === 'function') {
+      result.catch(() => {});
+    }
+  } catch (_) {
+  }
+}
 
 function stopCallTone() {
-  clearInterval(callToneTimer);
-  callToneTimer = 0;
+  callToneRequestedMode = '';
   callToneMode = '';
-  if (callToneNodes) {
-    try { callToneNodes.gain.gain.setTargetAtTime(0, callAudioContext.currentTime, 0.04); } catch (_) {}
-    try { callToneNodes.oscillators.forEach(node => node.stop()); } catch (_) {}
-    callToneNodes = null;
+  if (callToneAudio) {
+    callToneManualStop = true;
+    callToneAudio.pause();
+    try { callToneAudio.currentTime = 0; } catch (_) {}
+    callToneManualStop = false;
   }
 }
 
 function startCallTone(mode) {
-  if (callToneMode === mode && callToneNodes) return;
-  stopCallTone();
-  unlockCallAudio();
-  if (!callAudioContext || callAudioContext.state !== 'running') return;
-  try {
-    const gain = callAudioContext.createGain();
-    gain.gain.value = 0;
-    gain.connect(callAudioContext.destination);
-    const frequencies = mode === 'incoming' ? [440, 480] : [440];
-    const oscillators = frequencies.map(frequency => {
-      const oscillator = callAudioContext.createOscillator();
-      oscillator.type = 'sine';
-      oscillator.frequency.value = frequency;
-      oscillator.connect(gain);
-      oscillator.start();
-      return oscillator;
-    });
-    callToneNodes = {gain, oscillators};
-    callToneMode = mode;
-    callToneStartedAt = Date.now();
-    const update = () => {
-      if (!callToneNodes || !callAudioContext || callAudioContext.state !== 'running') return;
-      const elapsed = Date.now() - callToneStartedAt;
-      const on = mode === 'incoming' ? elapsed % 6000 < 2000 : elapsed % 4000 < 1000;
-      const target = on ? (mode === 'incoming' ? 0.10 : 0.07) : 0;
-      callToneNodes.gain.gain.setTargetAtTime(target, callAudioContext.currentTime, 0.035);
-    };
-    update();
-    callToneTimer = setInterval(update, 100);
-  } catch (error) {
-    console.warn('Call tone:', error);
-    stopCallTone();
-  }
+  callToneRequestedMode = mode;
+  playCallTone(mode);
 }
 
 function makeId() {
@@ -549,7 +621,7 @@ function handleSocketMessage(message) {
           for (const call of message.calls) {
             if (call?.id) send({t:'call.hangup', call:call.id});
           }
-          toast('Предыдущий вызов завершён после перезагрузки страницы');
+          toast('Вызов сброшен');
         }
       }
       break;
