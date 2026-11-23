@@ -540,7 +540,18 @@ function handleSocketMessage(message) {
         state.wakeCall = '';
         history.replaceState(null, '', location.pathname);
       }
-      if (message.calls?.length && state.call && !state.call.id) state.call.id = message.calls[0].id;
+      if (message.calls?.length) {
+        if (state.call) {
+          if (!state.call.id) state.call.id = message.calls[0].id;
+        } else {
+          // A page reload destroys the WebRTC peer connection. Do not leave
+          // the server-side call reserved for this device after reconnecting.
+          for (const call of message.calls) {
+            if (call?.id) send({t:'call.hangup', call:call.id});
+          }
+          toast('Предыдущий вызов завершён после перезагрузки страницы');
+        }
+      }
       break;
     case 'presence':
       if (message.online) state.online.add(Number(message.user)); else state.online.delete(Number(message.user));

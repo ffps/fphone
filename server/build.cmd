@@ -5,7 +5,7 @@ set CGO_ENABLED=0
 
 :: go mod tidy
 
-set ver=0.3.21
+set ver=0.3.22
 
 go build -ldflags "-s -w -X main.version=%ver%" -o fphone.exe .
 
