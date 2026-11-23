@@ -98,6 +98,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private var audioStarted = false
     private var audioFocus: AudioFocusRequest? = null
     private var ringback: AudioTrack? = null
+    @Volatile private var ringbackRunning = false
     private var frontCameraWanted = true
     private var pushSyncing = false
     private var refreshingFcm = false
@@ -241,62 +242,94 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     private fun startRingback() {
         stopRingback()
+        var track: AudioTrack? = null
         try {
             // 425 Hz tone: 1 second on, 4 seconds off.
             val sampleRate = 44_100
             val toneFrames = sampleRate
-            val cycleFrames = sampleRate * 5
-            val samples = ShortArray(cycleFrames)
             val fadeFrames = sampleRate / 100 // 10 ms
-
-            for (i in 0 until toneFrames) {
+            val tone = ShortArray(toneFrames)
+            for (i in tone.indices) {
                 val fadeIn = minOf(1.0, i.toDouble() / fadeFrames)
                 val fadeOut = minOf(1.0, (toneFrames - 1 - i).toDouble() / fadeFrames)
                 val envelope = minOf(fadeIn, fadeOut)
                 val wave = kotlin.math.sin(2.0 * Math.PI * 425.0 * i / sampleRate)
-                samples[i] = (wave * envelope * 0.65 * Short.MAX_VALUE).toInt().toShort()
+                tone[i] = (wave * envelope * 0.65 * Short.MAX_VALUE).toInt().toShort()
             }
 
-            val track = AudioTrack(
+            val minBuffer = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+            if (minBuffer <= 0) {
+                throw IllegalStateException("AudioTrack minimum buffer unavailable: $minBuffer")
+            }
+
+            val activeTrack = AudioTrack(
                 AudioManager.STREAM_VOICE_CALL,
                 sampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                samples.size * 2,
-                AudioTrack.MODE_STATIC
+                maxOf(minBuffer, 4096),
+                AudioTrack.MODE_STREAM
             )
-
-            if (track.state != AudioTrack.STATE_INITIALIZED) {
-                track.release()
+            track = activeTrack
+            if (activeTrack.state != AudioTrack.STATE_INITIALIZED) {
                 throw IllegalStateException("AudioTrack initialization failed")
             }
 
-            val written = track.write(samples, 0, samples.size)
-            if (written != samples.size) {
-                track.release()
-                throw IllegalStateException("AudioTrack wrote $written of ${samples.size} samples")
-            }
+            val silence = ShortArray(1024)
+            val chunkSize = 1024
+            activeTrack.play()
+            ringback = activeTrack
+            ringbackRunning = true
+            Thread({
+                try {
+                    while (ringbackRunning) {
+                        var offset = 0
+                        while (offset < tone.size && ringbackRunning) {
+                            val count = minOf(chunkSize, tone.size - offset)
+                            val written = activeTrack.write(tone, offset, count, AudioTrack.WRITE_BLOCKING)
+                            if (written <= 0) throw IllegalStateException("AudioTrack tone write failed: $written")
+                            offset += written
+                        }
 
-            val loopResult = track.setLoopPoints(0, samples.size, -1)
-            if (loopResult != AudioTrack.SUCCESS) {
-                track.release()
-                throw IllegalStateException("AudioTrack loop setup failed: $loopResult")
+                        // Four seconds of silence between ringback tones.
+                        var silenceRemaining = 4 * sampleRate
+                        while (silenceRemaining > 0 && ringbackRunning) {
+                            val count = minOf(silence.size, silenceRemaining)
+                            val written = activeTrack.write(silence, 0, count, AudioTrack.WRITE_BLOCKING)
+                            if (written <= 0) throw IllegalStateException("AudioTrack silence write failed: $written")
+                            silenceRemaining -= written
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (ringbackRunning) MessageLog.add(app, "CALL", "ringback playback failed: $e")
+                }
+            }, "fphone-ringback").apply {
+                isDaemon = true
+                start()
             }
-
-            track.play()
-            ringback = track
-            MessageLog.add(app, "CALL", "local ringback AudioTrack started")
+            MessageLog.add(app, "CALL", "local ringback AudioTrack streaming started")
         } catch (e: Exception) {
+            ringbackRunning = false
+            try { track?.release() } catch (_: Exception) { }
+            ringback = null
             MessageLog.add(app, "CALL", "ringback tone unavailable: $e")
         }
     }
 
     private fun stopRingback() {
-        try {
-            ringback?.stop()
-            ringback?.release()
-        } catch (_: Exception) { }
+        ringbackRunning = false
+        val track = ringback
         ringback = null
+        try {
+            track?.pause()
+            track?.flush()
+            track?.stop()
+        } catch (_: Exception) { }
+        try { track?.release() } catch (_: Exception) { }
     }
 
     // ---------- connection to the server ----------
