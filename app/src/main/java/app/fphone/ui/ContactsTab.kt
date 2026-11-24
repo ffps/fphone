@@ -341,6 +341,7 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
                             result.onFailure { error ->
                                 messageError = when ((error as? ApiException)?.code) {
                                     "no_push_devices" -> "У абонента нет доступных Android-устройств"
+                                    "bad_request" -> "Сообщение слишком длинное или содержит недопустимый текст"
                                     "push_disabled" -> "Отправка сообщений на сервере не настроена"
                                     else -> "Не удалось отправить сообщение"
                                 }
