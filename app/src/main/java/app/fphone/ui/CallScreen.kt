@@ -100,7 +100,8 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
         if (st == CallManager.State.IDLE) {
             if (sawCall && calls.lastEndReason in setOf("busy", "already_in_call", "server_lost")) {
                 val elapsed = SystemClock.elapsedRealtime() - calls.lastEndAtElapsedRealtime
-                val remaining = (2_000L - elapsed).coerceAtLeast(0L)
+                val hold = if (calls.lastEndReason == "busy") 2_700L else 2_000L
+                val remaining = (hold - elapsed).coerceAtLeast(0L)
                 if (remaining > 0L) delay(remaining)
             }
             onFinish()
