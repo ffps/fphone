@@ -96,7 +96,7 @@ object Notifications {
     }
 
     /** Simple notification for the test message of "fphone push-test" on the server. */
-    fun showTest(ctx: Context, title: String, text: String) {
+    fun showTest(ctx: Context, title: String, text: String, notificationId: Int = ID_TEST) {
         ensureChannels(ctx)
         val open = PendingIntent.getActivity(ctx, 6, Intent(ctx, MainActivity::class.java), immutable())
         val n = NotificationCompat.Builder(ctx, CH_MISC)
@@ -106,7 +106,7 @@ object Notifications {
             .setAutoCancel(true)
             .setContentIntent(open)
             .build()
-        ctx.getSystemService(NotificationManager::class.java).notify(ID_TEST, n)
+        ctx.getSystemService(NotificationManager::class.java).notify(if (notificationId == 0) ID_TEST else notificationId, n)
         MessageLog.add(ctx, "PUSH", "test notification displayed")
     }
 
