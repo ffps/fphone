@@ -20,6 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Test Go server
+        working-directory: server
+        run: go test ./...
+
       - name: Decide version
         id: ver
         env:
@@ -28,8 +37,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           VERSION=""
-          tag_re='^v([0-9]+\.[0-9]+\.[0-9]+)$'
-          msg_re='\[release v([0-9]+\.[0-9]+\.[0-9]+)\]'
+          tag_re='^v([0-9]+\\.[0-9]+\\.[0-9]+)$'
+          msg_re='\\[release v([0-9]+\\.[0-9]+\\.[0-9]+)\\]'
           if [ "$REF_TYPE" = "tag" ]; then
             if [[ "$REF_NAME" =~ $tag_re ]]; then
               VERSION="${BASH_REMATCH[1]}"
@@ -93,10 +102,10 @@ jobs:
           CODE: ${{ steps.ver.outputs.code }}
           REPO: ${{ github.repository }}
         run: |
-          gradle assembleRelease \
-            -PfphoneAppId="$APP_ID" \
-            -PfphoneUpdateRepo="$REPO" \
-            -PfphoneVersionName="$VERSION" \
+          gradle assembleRelease \\
+            -PfphoneAppId="$APP_ID" \\
+            -PfphoneUpdateRepo="$REPO" \\
+            -PfphoneVersionName="$VERSION" \\
             -PfphoneVersionCode="$CODE"
           cp app/build/outputs/apk/release/app-release.apk "Kukukha-$VERSION.apk"
 
