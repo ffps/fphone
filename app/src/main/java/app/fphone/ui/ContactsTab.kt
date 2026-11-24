@@ -290,15 +290,15 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
                 }
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { showMessage = true; messageError = "" }, modifier = Modifier.weight(1f)) {
-                        Icon(painterResource(R.drawable.ic_message), contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Сообщение")
+                    Button(onClick = { showMessage = true; messageError = "" }, modifier = Modifier.weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp)) {
+                        Icon(painterResource(R.drawable.ic_message), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Сообщение", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                     }
-                    Button(onClick = onCall, enabled = canCall, modifier = Modifier.weight(1f)) {
-                        Icon(painterResource(R.drawable.ic_call), contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Вызов")
+                    Button(onClick = onCall, enabled = canCall, modifier = Modifier.weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp)) {
+                        Icon(painterResource(R.drawable.ic_call), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Вызов", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
                     }
                 }
             }
