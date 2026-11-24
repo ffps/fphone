@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// The version is set at build time: go build -ldflags "-X main.version=0.3.17"
-var version = "0.3.17"
+// The version is set at build time: go build -ldflags "-X main.version=0.4.0"
+var version = "0.4.0"
 
 //go:embed fphone.example.yaml
 var exampleConfig []byte
