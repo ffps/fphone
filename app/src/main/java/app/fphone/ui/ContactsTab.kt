@@ -18,6 +18,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -39,6 +40,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,7 +67,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import android.widget.Toast
+import android.text.format.DateUtils
+import app.fphone.ApiException
+import app.fphone.Bg
 import app.fphone.CallManager
+import app.fphone.HistoryEntry
 import app.fphone.Contact
 import app.fphone.R
 
@@ -257,6 +267,14 @@ private fun ContactRow(
 
 @Composable
 private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, onDismiss: () -> Unit, onCall: () -> Unit) {
+    val app = rememberApp()
+    val context = LocalContext.current
+    var showMessage by remember { mutableStateOf(false) }
+    var messageText by remember { mutableStateOf("") }
+    var sending by remember { mutableStateOf(false) }
+    var messageError by remember { mutableStateOf("") }
+    val lastCall = app.history.entries.filter { it.peerId == c.id }.maxByOrNull { it.ts }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 6.dp) {
             Column(Modifier.widthIn(min = 280.dp, max = 360.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -266,15 +284,103 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
                 Text("@${c.login}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
                 Text(if (online) "Сейчас в сети" else lastSeenText(c.lastSeen), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (lastCall != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(lastCallText(lastCall), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Spacer(Modifier.height(20.dp))
-                Button(onClick = onCall, enabled = canCall, modifier = Modifier.fillMaxWidth()) {
-                    Icon(painterResource(R.drawable.ic_call), contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Вызов")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { showMessage = true; messageError = "" }, modifier = Modifier.weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp)) {
+                        Icon(painterResource(R.drawable.ic_message), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Сообщение", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                    }
+                    Button(onClick = onCall, enabled = canCall, modifier = Modifier.weight(1f), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 8.dp)) {
+                        Icon(painterResource(R.drawable.ic_call), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Вызов", style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false)
+                    }
                 }
             }
         }
     }
+
+    if (showMessage) {
+        AlertDialog(
+            onDismissRequest = { if (!sending) showMessage = false },
+            title = { Text("Сообщение: ${c.name}") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = messageText,
+                        onValueChange = { if (it.length <= 1000) messageText = it; messageError = "" },
+                        label = { Text("Текст сообщения") },
+                        enabled = !sending,
+                        minLines = 2,
+                        maxLines = 5
+                    )
+                    if (messageError.isNotEmpty()) {
+                        Text(messageError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = messageText.isNotBlank() && !sending,
+                    onClick = {
+                        sending = true
+                        messageError = ""
+                        val text = messageText
+                        Bg.run({ app.net.sendMessage(c.id, text) }) { result ->
+                            sending = false
+                            result.onSuccess {
+                                showMessage = false
+                                messageText = ""
+                                Toast.makeText(context, "Сообщение отправлено", Toast.LENGTH_SHORT).show()
+                            }
+                            result.onFailure { error ->
+                                messageError = when ((error as? ApiException)?.code) {
+                                    "no_push_devices" -> "У абонента нет доступных Android-устройств"
+                                    "push_disabled" -> "Отправка сообщений на сервере не настроена"
+                                    else -> "Не удалось отправить сообщение"
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Отправить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { if (!sending) showMessage = false }, enabled = !sending) { Text("Отмена") }
+            }
+        )
+    }
+}
+
+private fun lastCallText(e: HistoryEntry): String {
+    val result = when (e.result) {
+        "answered" -> if (e.outgoing) "Исходящий, состоялся" else "Входящий, принят"
+        "missed" -> "Пропущенный"
+        "declined" -> "Отклонён"
+        "rejected" -> "Отклонён абонентом"
+        "no_answer" -> "Нет ответа"
+        "busy" -> "Занято"
+        "offline" -> "Недоступен"
+        "cancelled" -> "Отменён"
+        "elsewhere" -> "Принят на другом устройстве"
+        else -> "Ошибка вызова"
+    }
+    val date = Date(e.ts)
+    val time = when {
+        DateUtils.isToday(e.ts) -> SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+        DateUtils.isToday(e.ts + DateUtils.DAY_IN_MILLIS) ->
+            "вчера, " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
+        else -> SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()).format(date)
+    }
+    val media = if (e.video) "видео" else "аудио"
+    return "Последний звонок: $result · $time · $media"
 }
 
 private fun lastSeenText(timestamp: Long): String {
