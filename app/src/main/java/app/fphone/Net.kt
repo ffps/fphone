@@ -204,6 +204,15 @@ class Net(private val prefs: Prefs) {
         request("POST", "/messages", JSONObject().put("to", to).put("text", text), true)
     }
 
+    /** Acknowledge a push-delivered message using its one-time device secret. */
+    fun ackMessage(messageId: String, ackToken: String) {
+        request(
+            "POST", "/messages/ack",
+            JSONObject().put("message_id", messageId).put("ack_token", ackToken),
+            false
+        )
+    }
+
     fun contacts(): List<Contact> {
         val arr = request("GET", "/contacts", null, true).optJSONArray("contacts") ?: return emptyList()
         val out = ArrayList<Contact>()
