@@ -44,6 +44,36 @@ class FcmService : FirebaseMessagingService() {
                 val id = d["call"] ?: return
                 main.post { calls.onPushCancelled(id) }
             }
+            "message" -> {
+                val notificationId = d["time"]?.toLongOrNull()?.toInt() ?: 0
+                Notifications.showTest(this, d["title"] ?: "Сообщение", d["text"] ?: "", notificationId)
+                val messageId = d["message_id"].orEmpty()
+                val ackToken = d["ack_token"].orEmpty()
+                if (messageId.isNotEmpty() && ackToken.isNotEmpty()) {
+                    Bg.run({
+                        var failure: Exception? = null
+                        for (attempt in 0 until 3) {
+                            try {
+                                applicationContext.app.net.ackMessage(messageId, ackToken)
+                                failure = null
+                                break
+                            } catch (e: Exception) {
+                                failure = e
+                                if (attempt < 2) Thread.sleep(1000L * (attempt + 1))
+                            }
+                        }
+                        if (failure != null) throw failure!!
+                    }, { result ->
+                        result.exceptionOrNull()?.let {
+                            MessageLog.add(this, "PUSH", "message delivery acknowledgement failed: ${it.message}")
+                        }
+                    })
+                }
+            }
+            "message.delivered" -> {
+                val notificationId = d["time"]?.toLongOrNull()?.toInt() ?: 0
+                Notifications.showTest(this, d["title"] ?: "Кукуха", d["text"] ?: "", notificationId)
+            }
             "test" -> {
                 val notificationId = d["time"]?.toLongOrNull()?.toInt() ?: 0
                 Notifications.showTest(this, d["title"] ?: getString(R.string.notif_test_title), d["text"] ?: "", notificationId)
