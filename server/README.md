@@ -316,6 +316,7 @@ sudo systemctl start fphone
 | `POST` | `/api/v1/logout` | Выход и удаление устройства |
 | `PUT` | `/api/v1/device` | Регистрация / обновление устройства |
 | `GET` | `/api/v1/contacts` | Контакты |
+| `POST` | `/api/v1/messages` | Отправка текстового push на Android-устройства контакта (`to`, `text`; до 1000 символов) |
 | `GET` | `/api/v1/me` | Профиль текущего пользователя |
 | `PUT` | `/api/v1/me` | Изменение профиля |
 | `PUT` | `/api/v1/me/avatar` | Загрузка аватара |
