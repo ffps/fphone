@@ -200,6 +200,10 @@ class Net(private val prefs: Prefs) {
         }
     }
 
+    fun sendMessage(to: Long, text: String) {
+        request("POST", "/messages", JSONObject().put("to", to).put("text", text), true)
+    }
+
     fun contacts(): List<Contact> {
         val arr = request("GET", "/contacts", null, true).optJSONArray("contacts") ?: return emptyList()
         val out = ArrayList<Contact>()
