@@ -541,7 +541,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                 if (local.outgoing && engine != null && (state == State.CONNECTING || state == State.ACTIVE)) {
                     restartIce()
                 }
-            } else if (local == null) {
+            } else if (local == null && pendingRejectId != id) {
                 // A call of an earlier run of the app: it cannot be continued.
                 send(JSONObject().put("t", "call.hangup").put("call", id))
             }
