@@ -348,6 +348,7 @@ func (m *Calls) Handle(c *Client, typ string, data []byte) {
 		Candidate  json.RawMessage `json:"candidate"`
 		ICERestart bool            `json:"ice_restart"`
 		Enabled    bool            `json:"enabled"`
+		Reason     string          `json:"reason"`
 	}
 	if err := json.Unmarshal(data, &req); err != nil {
 		c.sendErr("bad_json", typ)
@@ -359,7 +360,7 @@ func (m *Calls) Handle(c *Client, typ string, data []byte) {
 	case "call.signal":
 		m.signal(c, req.Call, req.Kind, req.SDP, req.Candidate, req.ICERestart, req.Enabled)
 	default:
-		m.simple(c, typ, req.Call)
+		m.simple(c, typ, req.Call, req.Reason)
 	}
 }
 
@@ -438,7 +439,7 @@ func (m *Calls) invite(c *Client, to int64, media string) {
 }
 
 // simple handles messages that carry only a call ID.
-func (m *Calls) simple(c *Client, typ, callID string) {
+func (m *Calls) simple(c *Client, typ, callID, rejectReason string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -490,7 +491,11 @@ func (m *Calls) simple(c *Client, typ, callID string) {
 			c.sendErr("bad_state", typ)
 			return
 		}
-		m.endLocked(call, "rejected")
+		reason := "rejected"
+		if rejectReason == "busy" {
+			reason = "busy"
+		}
+		m.endLocked(call, reason)
 
 	case "call.cancel":
 		if role != "caller" || !pending {
