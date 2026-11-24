@@ -460,22 +460,34 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 		"type": "test", "title": recipient.Name, "text": req.Text,
 		"time": strconv.FormatInt(time.Now().Unix(), 10),
 	}
-	accepted, failed := 0, 0
+	type pushResult struct {
+		target PushTarget
+		messageID string
+		err error
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	results := make(chan pushResult, len(targets))
 	for _, target := range targets {
-		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-		messageID, sendErr := s.hub.calls.push.SendWithResult(ctx, target.Token, data, "fphone-test", time.Minute)
-		cancel()
-		if sendErr == nil {
+		go func(t PushTarget) {
+			id, sendErr := s.hub.calls.push.SendWithResult(ctx, t.Token, data, "", time.Minute)
+			results <- pushResult{target: t, messageID: id, err: sendErr}
+		}(target)
+	}
+	accepted, failed := 0, 0
+	for range targets {
+		result := <-results
+		if result.err == nil {
 			accepted++
 			slog.Debug("message push accepted by FCM", "sender", sess.User.Login, "recipient", recipient.Login,
-				"device_id", target.DeviceID, "message_id", messageID)
+				"device_id", result.target.DeviceID, "message_id", result.messageID)
 		} else {
 			failed++
-			if errors.Is(sendErr, ErrTokenInvalid) {
-				s.store.ClearFCM(target.DeviceID, target.Token)
+			if errors.Is(result.err, ErrTokenInvalid) {
+				s.store.ClearFCM(result.target.DeviceID, result.target.Token)
 			}
 			slog.Warn("message push failed", "sender", sess.User.Login, "recipient", recipient.Login,
-				"device_id", target.DeviceID, "err", sendErr)
+				"device_id", result.target.DeviceID, "err", result.err)
 		}
 	}
 	if accepted == 0 {
