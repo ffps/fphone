@@ -84,7 +84,7 @@ func OpenStore(dir string, ttl time.Duration) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// createSchema creates a new database. Existing databases are not migrated.
+// createSchema creates the database and adds new tables without altering existing data.
 func (s *Store) createSchema() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS users (
@@ -117,6 +117,17 @@ func (s *Store) createSchema() error {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS message_deliveries (
+			message_id TEXT NOT NULL,
+			device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			ack_hash TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL,
+			delivered_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(message_id, device_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS message_deliveries_expiry ON message_deliveries(expires_at)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -513,5 +524,71 @@ func (s *Store) WebPushTargets(userID int64) ([]WebPushTarget, error) {
 
 func (s *Store) ClearWebPush(deviceID int64, endpoint string) error {
 	_, err := s.db.Exec(`DELETE FROM web_push_subscriptions WHERE device_id=? AND endpoint=?`, deviceID, endpoint)
+	return err
+}
+
+// CreateMessageDeliveries stores one-time acknowledgement secrets before push is sent.
+func (s *Store) CreateMessageDeliveries(messageID string, senderID int64, tokens map[int64]string) error {
+	now := time.Now().Unix()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM message_deliveries WHERE expires_at<?`, now); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for deviceID, token := range tokens {
+		if _, err = tx.Exec(`INSERT INTO message_deliveries(message_id,device_id,sender_id,ack_hash,created_at,expires_at)
+			VALUES(?,?,?,?,?,?)`, messageID, deviceID, senderID, HashToken(token), now, now+7*24*60*60); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ConfirmMessageDelivery accepts one acknowledgement per recipient device.
+func (s *Store) ConfirmMessageDelivery(messageID, token string) (senderID int64, deviceName string, newlyDelivered bool, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, "", false, err
+	}
+	var deliveredAt, expiresAt, deviceID int64
+	err = tx.QueryRow(`SELECT m.sender_id,d.name,m.delivered_at,m.expires_at,m.device_id
+		FROM message_deliveries m JOIN devices d ON d.id=m.device_id
+		WHERE m.message_id=? AND m.ack_hash=?`, messageID, HashToken(token)).
+		Scan(&senderID, &deviceName, &deliveredAt, &expiresAt, &deviceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		_ = tx.Rollback()
+		return 0, "", false, ErrNotFound
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, "", false, err
+	}
+	if expiresAt < time.Now().Unix() {
+		_ = tx.Rollback()
+		return 0, "", false, ErrNotFound
+	}
+	if deliveredAt != 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, "", false, err
+		}
+		return senderID, deviceName, false, nil
+	}
+	if _, err := tx.Exec(`UPDATE message_deliveries SET delivered_at=? WHERE message_id=? AND device_id=? AND delivered_at=0`,
+		time.Now().Unix(), messageID, deviceID); err != nil {
+		_ = tx.Rollback()
+		return 0, "", false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, "", false, err
+	}
+	return senderID, deviceName, true, nil
+}
+
+func (s *Store) DeleteMessageDelivery(messageID string, deviceID int64) error {
+	_, err := s.db.Exec(`DELETE FROM message_deliveries WHERE message_id=? AND device_id=?`, messageID, deviceID)
 	return err
 }
