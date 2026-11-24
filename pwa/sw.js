@@ -1,4 +1,4 @@
-const CACHE = 'kukukha-pwa-v17';
+const CACHE = 'kukukha-pwa-v18';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)));
@@ -101,6 +101,32 @@ self.addEventListener('push', event => {
         silent: false,
         timestamp,
         data: {type: 'message'}
+      });
+      if (data.message_id && data.ack_token) {
+        try {
+          const response = await fetch('/api/v1/messages/ack', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message_id: data.message_id, ack_token: data.ack_token})
+          });
+          if (!response.ok) console.warn('Message delivery acknowledgement:', response.status);
+        } catch (error) {
+          console.warn('Message delivery acknowledgement:', error);
+        }
+      }
+      return;
+    }
+    if (data.type === 'message.delivered') {
+      const timestamp = Number(data.time) || Date.now();
+      await self.registration.showNotification(data.title || 'Кукуха', {
+        body: data.body || data.text || '',
+        icon: './icon-192.png',
+        badge: './icon-192.png',
+        tag: 'message-delivered-' + timestamp,
+        renotify: true,
+        silent: false,
+        timestamp,
+        data: {type: 'message.delivered'}
       });
       return;
     }
