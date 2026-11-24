@@ -102,10 +102,10 @@ jobs:
           CODE: ${{ steps.ver.outputs.code }}
           REPO: ${{ github.repository }}
         run: |
-          gradle assembleRelease \\
-            -PfphoneAppId="$APP_ID" \\
-            -PfphoneUpdateRepo="$REPO" \\
-            -PfphoneVersionName="$VERSION" \\
+          gradle assembleRelease \
+            -PfphoneAppId="$APP_ID" \
+            -PfphoneUpdateRepo="$REPO" \
+            -PfphoneVersionName="$VERSION" \
             -PfphoneVersionCode="$CODE"
           cp app/build/outputs/apk/release/app-release.apk "Kukukha-$VERSION.apk"
 
