@@ -154,6 +154,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         val need = ArrayList<String>()
         if (!granted(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO)
         if (!granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA)
+        if (!granted(Manifest.permission.READ_PHONE_STATE)) need.add(Manifest.permission.READ_PHONE_STATE)
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
             need.add(Manifest.permission.POST_NOTIFICATIONS)
         }
