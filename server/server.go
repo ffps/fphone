@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/push/subscription", s.authed(s.handleWebPushDelete))
 	mux.HandleFunc("GET /api/v1/contacts", s.authed(s.handleContacts))
 	mux.HandleFunc("POST /api/v1/messages", s.authed(s.handleMessagePush))
+	mux.HandleFunc("POST /api/v1/messages/ack", s.rest(s.handleMessageAck))
 	mux.HandleFunc("GET /api/v1/users/{id}/avatar", s.authed(s.handleAvatar))
 	mux.HandleFunc("GET /api/v1/me", s.authed(s.handleMeGet))
 	mux.HandleFunc("PUT /api/v1/me", s.authed(s.handleMe))
@@ -465,19 +466,33 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 
+	// Prefer FCM if a device happens to have both transports registered.
+	fcmDevices := make(map[int64]bool, len(fcmTargets))
+	for _, target := range fcmTargets {
+		fcmDevices[target.DeviceID] = true
+	}
+	filteredWeb := webTargets[:0]
+	for _, target := range webTargets {
+		if !fcmDevices[target.DeviceID] {
+			filteredWeb = append(filteredWeb, target)
+		}
+	}
+	webTargets = filteredWeb
+
 	title := sess.User.Name
 	if title == "" {
 		title = sess.User.Login
 	}
 	now := time.Now().UnixMilli()
-	fcmData := map[string]string{
-		"type": "test", "title": title, "text": req.Text,
-		"time": strconv.FormatInt(now, 10),
+	messageID, _ := NewToken()
+	ackTokens := make(map[int64]string, len(fcmTargets)+len(webTargets))
+	for _, target := range fcmTargets {
+		ackTokens[target.DeviceID], _ = NewToken()
 	}
-	webPayload, err := json.Marshal(map[string]any{
-		"type": "message", "title": title, "body": req.Text, "text": req.Text, "time": now,
-	})
-	if err != nil {
+	for _, target := range webTargets {
+		ackTokens[target.DeviceID], _ = NewToken()
+	}
+	if err := s.store.CreateMessageDeliveries(messageID, sess.User.ID, ackTokens); err != nil {
 		serverErr(w, err)
 		return
 	}
@@ -494,13 +509,26 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 	results := make(chan pushResult, total)
 	for _, target := range fcmTargets {
 		go func(t PushTarget) {
-			_, sendErr := s.hub.calls.push.SendWithResult(ctx, t.Token, fcmData, "", time.Minute)
+			data := map[string]string{
+				"type": "message", "title": title, "text": req.Text,
+				"time": strconv.FormatInt(now, 10), "message_id": messageID,
+				"ack_token": ackTokens[t.DeviceID],
+			}
+			_, sendErr := s.hub.calls.push.SendWithResult(ctx, t.Token, data, "", time.Minute)
 			results <- pushResult{deviceID: t.DeviceID, token: t.Token, err: sendErr}
 		}(target)
 	}
 	for _, target := range webTargets {
 		go func(t WebPushTarget) {
-			sendErr := s.hub.calls.webPush.Send(ctx, t, webPayload, time.Minute)
+			payload, marshalErr := json.Marshal(map[string]any{
+				"type": "message", "title": title, "body": req.Text, "text": req.Text, "time": now,
+				"message_id": messageID, "ack_token": ackTokens[t.DeviceID],
+			})
+			if marshalErr != nil {
+				results <- pushResult{deviceID: t.DeviceID, endpoint: t.Endpoint, err: marshalErr}
+				return
+			}
+			sendErr := s.hub.calls.webPush.Send(ctx, t, payload, time.Minute)
 			results <- pushResult{deviceID: t.DeviceID, endpoint: t.Endpoint, err: sendErr}
 		}(target)
 	}
@@ -519,6 +547,7 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 			continue
 		}
 		failed++
+		_ = s.store.DeleteMessageDelivery(messageID, result.deviceID)
 		if result.token != "" {
 			if errors.Is(result.err, ErrTokenInvalid) {
 				s.store.ClearFCM(result.deviceID, result.token)
@@ -538,6 +567,75 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "accepted": accepted, "failed": failed})
+}
+
+// handleMessageAck is authorized by a one-time random secret embedded in the push for this device.
+func (s *Server) handleMessageAck(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MessageID string `json:"message_id"`
+		AckToken  string `json:"ack_token"`
+	}
+	if !decodeJSON(w, r, &req) || len(req.MessageID) > 64 || len(req.AckToken) > 128 || req.MessageID == "" || req.AckToken == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid message acknowledgement")
+		return
+	}
+	senderID, deviceName, newlyDelivered, err := s.store.ConfirmMessageDelivery(req.MessageID, req.AckToken)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "unknown_message", "message acknowledgement not found")
+		} else {
+			serverErr(w, err)
+		}
+		return
+	}
+	if newlyDelivered {
+		go s.notifyMessageDelivered(senderID, deviceName)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": !newlyDelivered})
+}
+
+// notifyMessageDelivered sends a push to all sender devices after one recipient device confirms delivery.
+func (s *Server) notifyMessageDelivered(senderID int64, deviceName string) {
+	if s.hub.calls == nil {
+		return
+	}
+	text := "Сообщение доставлено на " + truncRunes(deviceName, 64)
+	title := "Кукуха"
+	now := time.Now().UnixMilli()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if s.hub.calls.push != nil {
+		targets, err := s.store.PushTargets(senderID)
+		if err != nil {
+			slog.Warn("message delivery notification: FCM targets", "err", err)
+		} else {
+			for _, target := range targets {
+				data := map[string]string{
+					"type": "message.delivered", "title": title, "text": text,
+					"time": strconv.FormatInt(now, 10),
+				}
+				if _, err := s.hub.calls.push.SendWithResult(ctx, target.Token, data, "", time.Minute); err != nil {
+					slog.Warn("message delivery notification: FCM failed", "device_id", target.DeviceID, "err", err)
+				}
+			}
+		}
+	}
+	if s.hub.calls.webPush != nil {
+		targets, err := s.store.WebPushTargets(senderID)
+		if err != nil {
+			slog.Warn("message delivery notification: Web Push targets", "err", err)
+		} else {
+			payload, _ := json.Marshal(map[string]any{
+				"type": "message.delivered", "title": title, "body": text, "text": text, "time": now,
+			})
+			for _, target := range targets {
+				if err := s.hub.calls.webPush.Send(ctx, target, payload, time.Minute); err != nil {
+					slog.Warn("message delivery notification: Web Push failed", "device_id", target.DeviceID, "err", err)
+				}
+			}
+		}
+	}
 }
 
 // ---------- user photos and profile ----------
