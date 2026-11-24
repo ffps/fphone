@@ -24,6 +24,7 @@ let callToneUrls = null;
 let callToneUnlocking = false;
 let callToneUnlocked = false;
 let callToneManualStop = false;
+let callToneStopTimer = 0;
 
 function makeToneWavUrl(mode) {
   const sampleRate = 22050;
@@ -38,8 +39,8 @@ function makeToneWavUrl(mode) {
   view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeText(36, 'data'); view.setUint32(40, samples * 2, true);
   for (let i = 0; i < samples; i++) {
     const t = i / sampleRate;
-    const cycle = mode === 'incoming' ? 6 : 4;
-    const onDuration = mode === 'incoming' ? 2 : 1;
+    const cycle = mode === 'incoming' ? 6 : mode === 'busy' ? 1 : 4;
+    const onDuration = mode === 'incoming' ? 2 : mode === 'busy' ? 0.5 : 1;
     const phase = t % cycle;
     let sample = 0;
     if (phase < onDuration) {
@@ -47,7 +48,9 @@ function makeToneWavUrl(mode) {
       const envelope = Math.max(0, edge);
       const tone = mode === 'incoming'
         ? (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.10
-        : Math.sin(2 * Math.PI * 440 * t) * 0.20;
+        : mode === 'busy'
+          ? (Math.sin(2 * Math.PI * 480 * t) + Math.sin(2 * Math.PI * 620 * t)) * 0.12
+          : Math.sin(2 * Math.PI * 440 * t) * 0.20;
       sample = tone * envelope;
     }
     view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, sample)) * 32767, true);
@@ -139,6 +142,8 @@ function playCallTone(mode) {
 }
 
 function stopCallTone() {
+  clearTimeout(callToneStopTimer);
+  callToneStopTimer = 0;
   callToneRequestedMode = '';
   callToneMode = '';
   if (callToneAudio) {
@@ -150,6 +155,8 @@ function stopCallTone() {
 }
 
 function startCallTone(mode) {
+  clearTimeout(callToneStopTimer);
+  callToneStopTimer = 0;
   callToneRequestedMode = mode;
   playCallTone(mode);
 }
@@ -918,7 +925,12 @@ $('hangup-call').addEventListener('click', () => {
 });
 
 function endCall(showMain = true, reason = 'hangup') {
+  const playBusyTone = reason === 'busy' && state.call?.outgoing;
   stopCallTone();
+  if (playBusyTone) {
+    startCallTone('busy');
+    callToneStopTimer = setTimeout(stopCallTone, 2500);
+  }
   saveHistory(state.call, reason);
   if (state.pc) { state.pc.ontrack = null; state.pc.onicecandidate = null; state.pc.onconnectionstatechange = null; state.pc.close(); }
   state.pc = null;
