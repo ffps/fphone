@@ -458,7 +458,7 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 	}
 	data := map[string]string{
 		"type": "test", "title": recipient.Name, "text": req.Text,
-		"time": strconv.FormatInt(time.Now().Unix(), 10),
+		"time": strconv.FormatInt(time.Now().UnixMilli(), 10),
 	}
 	type pushResult struct {
 		target PushTarget
