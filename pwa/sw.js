@@ -1,4 +1,4 @@
-const CACHE = 'kukukha-pwa-v15';
+const CACHE = 'kukukha-pwa-v16';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)));
@@ -88,6 +88,20 @@ self.addEventListener('push', event => {
       } catch (error) {
         console.warn('Push queue:', error);
       }
+      return;
+    }
+    if (data.type === 'message') {
+      const timestamp = Number(data.time) || Date.now();
+      await self.registration.showNotification(data.title || 'Сообщение', {
+        body: data.body || data.text || '',
+        icon: './icon-192.png',
+        badge: './icon-192.png',
+        tag: 'message-' + timestamp,
+        renotify: true,
+        silent: false,
+        timestamp,
+        data: {type: 'message'}
+      });
       return;
     }
     if (data.type !== 'call.incoming' || !data.call) return;
