@@ -68,7 +68,7 @@ function ensureCallToneAudio() {
   callToneAudio.playsInline = true;
   callToneAudio.style.display = 'none';
   (document.body || document.documentElement).appendChild(callToneAudio);
-  callToneUrls = {ringback:makeToneWavUrl('ringback'), incoming:makeToneWavUrl('incoming')};
+  callToneUrls = {ringback:makeToneWavUrl('ringback'), incoming:makeToneWavUrl('incoming'), busy:makeToneWavUrl('busy')};
   return callToneAudio;
 }
 
