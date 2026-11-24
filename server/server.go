@@ -51,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/push/subscription", s.authed(s.handleWebPushSubscription))
 	mux.HandleFunc("DELETE /api/v1/push/subscription", s.authed(s.handleWebPushDelete))
 	mux.HandleFunc("GET /api/v1/contacts", s.authed(s.handleContacts))
+	mux.HandleFunc("POST /api/v1/messages", s.authed(s.handleMessagePush))
 	mux.HandleFunc("GET /api/v1/users/{id}/avatar", s.authed(s.handleAvatar))
 	mux.HandleFunc("GET /api/v1/me", s.authed(s.handleMeGet))
 	mux.HandleFunc("PUT /api/v1/me", s.authed(s.handleMe))
@@ -423,6 +424,64 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Se
 			Reachable: on || (canPush && u.HasPush), Avatar: s.avatarVersionForLogin(u.Login), LastSeen: u.LastSeen})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": out})
+}
+
+// handleMessagePush sends a short text notification to the Android devices of a contact.
+func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess *Session) {
+	if s.hub.calls == nil || s.hub.calls.push == nil {
+		writeErr(w, http.StatusServiceUnavailable, "push_disabled", "FCM is not configured")
+		return
+	}
+	var req struct {
+		To int64 `json:"to"`
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.To <= 0 || req.To == sess.User.ID ||
+		strings.TrimSpace(req.Text) == "" || len([]rune(req.Text)) > 1000 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid recipient or message")
+		return
+	}
+	recipient, err := s.store.UserByID(req.To)
+	if err != nil || recipient.Disabled {
+		writeErr(w, http.StatusNotFound, "unknown_user", "contact not found")
+		return
+	}
+	targets, err := s.store.PushTargets(recipient.ID)
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+	if len(targets) == 0 {
+		writeErr(w, http.StatusServiceUnavailable, "no_push_devices", "contact has no Android devices with push enabled")
+		return
+	}
+	data := map[string]string{
+		"type": "test", "title": recipient.Name, "text": req.Text,
+		"time": strconv.FormatInt(time.Now().Unix(), 10),
+	}
+	accepted, failed := 0, 0
+	for _, target := range targets {
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		messageID, sendErr := s.hub.calls.push.SendWithResult(ctx, target.Token, data, "fphone-test", time.Minute)
+		cancel()
+		if sendErr == nil {
+			accepted++
+			slog.Debug("message push accepted by FCM", "sender", sess.User.Login, "recipient", recipient.Login,
+				"device_id", target.DeviceID, "message_id", messageID)
+		} else {
+			failed++
+			if errors.Is(sendErr, ErrTokenInvalid) {
+				s.store.ClearFCM(target.DeviceID, target.Token)
+			}
+			slog.Warn("message push failed", "sender", sess.User.Login, "recipient", recipient.Login,
+				"device_id", target.DeviceID, "err", sendErr)
+		}
+	}
+	if accepted == 0 {
+		writeErr(w, http.StatusBadGateway, "push_failed", "message could not be sent")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "accepted": accepted, "failed": failed})
 }
 
 // ---------- user photos and profile ----------
