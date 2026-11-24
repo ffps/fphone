@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import android.widget.Toast
 import android.text.format.DateUtils
+import app.fphone.ApiException
 import app.fphone.Bg
 import app.fphone.CallManager
 import app.fphone.HistoryEntry
@@ -312,7 +313,7 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
                 Column {
                     OutlinedTextField(
                         value = messageText,
-                        onValueChange = { messageText = it; messageError = "" },
+                        onValueChange = { if (it.length <= 1000) messageText = it; messageError = "" },
                         label = { Text("Текст сообщения") },
                         enabled = !sending,
                         minLines = 2,
@@ -338,7 +339,7 @@ private fun ContactDetailsDialog(c: Contact, online: Boolean, canCall: Boolean, 
                                 Toast.makeText(context, "Сообщение отправлено", Toast.LENGTH_SHORT).show()
                             }
                             result.onFailure { error ->
-                                messageError = when ((error as? app.fphone.ApiException)?.code) {
+                                messageError = when ((error as? ApiException)?.code) {
                                     "no_push_devices" -> "У абонента нет доступных Android-устройств"
                                     "push_disabled" -> "Отправка сообщений на сервере не настроена"
                                     else -> "Не удалось отправить сообщение"
