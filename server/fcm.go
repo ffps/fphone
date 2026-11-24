@@ -75,11 +75,13 @@ func (f *FCM) SendWithResult(ctx context.Context, token string, data map[string]
 			"token": token,
 			"data":  data,
 			"android": map[string]any{
-				"priority":     "HIGH",
-				"ttl":          fmt.Sprintf("%ds", int(ttl.Seconds())),
-				"collapse_key": collapseKey,
+				"priority": "HIGH",
+				"ttl":      fmt.Sprintf("%ds", int(ttl.Seconds())),
 			},
 		},
+	}
+	if collapseKey != "" {
+		payload["message"].(map[string]any)["android"].(map[string]any)["collapse_key"] = collapseKey
 	}
 	if f.validateOnly {
 		payload["validate_only"] = true
