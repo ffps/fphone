@@ -427,14 +427,10 @@ func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request, sess *Se
 	writeJSON(w, http.StatusOK, map[string]any{"contacts": out})
 }
 
-// handleMessagePush sends a short text notification to the Android devices of a contact.
+// handleMessagePush sends a short text notification to all push-enabled devices of a contact.
 func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess *Session) {
-	if s.hub.calls == nil || s.hub.calls.push == nil {
-		writeErr(w, http.StatusServiceUnavailable, "push_disabled", "FCM is not configured")
-		return
-	}
 	var req struct {
-		To int64 `json:"to"`
+		To   int64  `json:"to"`
 		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.To <= 0 || req.To == sess.User.ID ||
@@ -447,51 +443,94 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 		writeErr(w, http.StatusNotFound, "unknown_user", "contact not found")
 		return
 	}
-	targets, err := s.store.PushTargets(recipient.ID)
-	if err != nil {
-		serverErr(w, err)
+
+	var fcmTargets []PushTarget
+	var webTargets []WebPushTarget
+	if s.hub.calls != nil && s.hub.calls.push != nil {
+		fcmTargets, err = s.store.PushTargets(recipient.ID)
+		if err != nil {
+			serverErr(w, err)
+			return
+		}
+	}
+	if s.hub.calls != nil && s.hub.calls.webPush != nil {
+		webTargets, err = s.store.WebPushTargets(recipient.ID)
+		if err != nil {
+			serverErr(w, err)
+			return
+		}
+	}
+	if len(fcmTargets)+len(webTargets) == 0 {
+		writeErr(w, http.StatusServiceUnavailable, "no_push_devices", "contact has no devices with push notifications enabled")
 		return
 	}
-	if len(targets) == 0 {
-		writeErr(w, http.StatusServiceUnavailable, "no_push_devices", "contact has no Android devices with push enabled")
-		return
-	}
+
 	title := sess.User.Name
 	if title == "" {
 		title = sess.User.Login
 	}
-	data := map[string]string{
+	now := time.Now().UnixMilli()
+	fcmData := map[string]string{
 		"type": "test", "title": title, "text": req.Text,
-		"time": strconv.FormatInt(time.Now().UnixMilli(), 10),
+		"time": strconv.FormatInt(now, 10),
 	}
+	webPayload, err := json.Marshal(map[string]any{
+		"type": "message", "title": title, "body": req.Text, "text": req.Text, "time": now,
+	})
+	if err != nil {
+		serverErr(w, err)
+		return
+	}
+
 	type pushResult struct {
-		target PushTarget
-		messageID string
-		err error
+		deviceID int64
+		token    string
+		endpoint string
+		err      error
 	}
+	total := len(fcmTargets) + len(webTargets)
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
-	results := make(chan pushResult, len(targets))
-	for _, target := range targets {
+	results := make(chan pushResult, total)
+	for _, target := range fcmTargets {
 		go func(t PushTarget) {
-			id, sendErr := s.hub.calls.push.SendWithResult(ctx, t.Token, data, "", time.Minute)
-			results <- pushResult{target: t, messageID: id, err: sendErr}
+			_, sendErr := s.hub.calls.push.SendWithResult(ctx, t.Token, fcmData, "", time.Minute)
+			results <- pushResult{deviceID: t.DeviceID, token: t.Token, err: sendErr}
 		}(target)
 	}
+	for _, target := range webTargets {
+		go func(t WebPushTarget) {
+			sendErr := s.hub.calls.webPush.Send(ctx, t, webPayload, time.Minute)
+			results <- pushResult{deviceID: t.DeviceID, endpoint: t.Endpoint, err: sendErr}
+		}(target)
+	}
+
 	accepted, failed := 0, 0
-	for range targets {
+	for i := 0; i < total; i++ {
 		result := <-results
 		if result.err == nil {
 			accepted++
-			slog.Debug("message push accepted by FCM", "sender", sess.User.Login, "recipient", recipient.Login,
-				"device_id", result.target.DeviceID, "message_id", result.messageID)
-		} else {
-			failed++
-			if errors.Is(result.err, ErrTokenInvalid) {
-				s.store.ClearFCM(result.target.DeviceID, result.target.Token)
+			transport := "Web Push"
+			if result.token != "" {
+				transport = "FCM"
 			}
-			slog.Warn("message push failed", "sender", sess.User.Login, "recipient", recipient.Login,
-				"device_id", result.target.DeviceID, "err", result.err)
+			slog.Debug("message push accepted", "transport", transport, "sender", sess.User.Login,
+				"recipient", recipient.Login, "device_id", result.deviceID)
+			continue
+		}
+		failed++
+		if result.token != "" {
+			if errors.Is(result.err, ErrTokenInvalid) {
+				s.store.ClearFCM(result.deviceID, result.token)
+			}
+			slog.Warn("message FCM push failed", "sender", sess.User.Login, "recipient", recipient.Login,
+				"device_id", result.deviceID, "err", result.err)
+		} else {
+			if errors.Is(result.err, ErrWebPushGone) {
+				s.store.ClearWebPush(result.deviceID, result.endpoint)
+			}
+			slog.Warn("message Web Push failed", "sender", sess.User.Login, "recipient", recipient.Login,
+				"device_id", result.deviceID, "err", result.err)
 		}
 	}
 	if accepted == 0 {
