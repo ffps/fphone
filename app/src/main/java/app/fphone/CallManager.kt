@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.telephony.TelephonyManager
 import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.PeerConnection
@@ -93,6 +94,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     private var pending = Pending.NONE
     private var pendingInvite: JSONObject? = null
     private var pendingRejectId: String? = null
+    private var pendingRejectReason = "rejected"
+    private var busyToneActive = false
     private var cameraWanted = true
     private var restarts = 0
     private var audioStarted = false
@@ -112,7 +115,13 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     }
     private val clearReject = Runnable {
         pendingRejectId = null
+        pendingRejectReason = "rejected"
         maybeDisconnect()
+    }
+    private val busyToneStop = Runnable {
+        stopRingback()
+        busyToneActive = false
+        stopAudio()
     }
     private val connectionLostTimeout = Runnable {
         if (call != null && !connected) {
@@ -332,6 +341,75 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         try { track?.release() } catch (_: Exception) { }
     }
 
+    private fun startBusyTone() {
+        stopRingback()
+        var track: AudioTrack? = null
+        try {
+            // Busy tone: 480 + 620 Hz, 0.5 seconds on and 0.5 seconds off.
+            val sampleRate = 44_100
+            val toneFrames = sampleRate / 2
+            val fadeFrames = sampleRate / 100
+            val tone = ShortArray(toneFrames)
+            for (i in tone.indices) {
+                val fadeIn = minOf(1.0, i.toDouble() / fadeFrames)
+                val fadeOut = minOf(1.0, (toneFrames - 1 - i).toDouble() / fadeFrames)
+                val envelope = minOf(fadeIn, fadeOut)
+                val t = i.toDouble() / sampleRate
+                val wave = kotlin.math.sin(2.0 * Math.PI * 480.0 * t) +
+                    kotlin.math.sin(2.0 * Math.PI * 620.0 * t)
+                tone[i] = (wave * envelope * 0.28 * Short.MAX_VALUE).toInt().toShort()
+            }
+            val minBuffer = AudioTrack.getMinBufferSize(
+                sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
+            )
+            if (minBuffer <= 0) throw IllegalStateException("AudioTrack minimum buffer unavailable: $minBuffer")
+            val activeTrack = AudioTrack(
+                AudioManager.STREAM_VOICE_CALL, sampleRate, AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, 4096), AudioTrack.MODE_STREAM
+            )
+            track = activeTrack
+            if (activeTrack.state != AudioTrack.STATE_INITIALIZED) {
+                throw IllegalStateException("AudioTrack initialization failed")
+            }
+            val silence = ShortArray(1024)
+            activeTrack.play()
+            ringback = activeTrack
+            ringbackRunning = true
+            Thread({
+                try {
+                    while (ringbackRunning) {
+                        var offset = 0
+                        while (offset < tone.size && ringbackRunning) {
+                            val count = minOf(1024, tone.size - offset)
+                            val written = activeTrack.write(tone, offset, count, AudioTrack.WRITE_BLOCKING)
+                            if (written <= 0) throw IllegalStateException("AudioTrack busy tone write failed: $written")
+                            offset += written
+                        }
+                        var remaining = sampleRate / 2
+                        while (remaining > 0 && ringbackRunning) {
+                            val count = minOf(silence.size, remaining)
+                            val written = activeTrack.write(silence, 0, count, AudioTrack.WRITE_BLOCKING)
+                            if (written <= 0) throw IllegalStateException("AudioTrack busy silence write failed: $written")
+                            remaining -= written
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (ringbackRunning) MessageLog.add(app, "CALL", "busy tone playback failed: $e")
+                }
+            }, "fphone-busy-tone").apply {
+                isDaemon = true
+                start()
+            }
+            MessageLog.add(app, "CALL", "local busy tone started")
+        } catch (e: Exception) {
+            ringbackRunning = false
+            try { track?.release() } catch (_: Exception) { }
+            ringback = null
+            MessageLog.add(app, "CALL", "busy tone unavailable: $e")
+        }
+    }
+
+
     // ---------- connection to the server ----------
 
     private fun wantConnection(): Boolean =
@@ -504,6 +582,12 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     fun startCall(peerId: Long, peerName: String, video: Boolean, fromRecents: Boolean = false) {
         if (state != State.IDLE || !prefs.loggedIn) return
+        if (busyToneActive) {
+            main.removeCallbacks(busyToneStop)
+            stopRingback()
+            busyToneActive = false
+            stopAudio()
+        }
         val c = CallInfo("", true, peerId, peerName, video, videoCapable = video || fromRecents)
         call = c
         state = State.OUTGOING
@@ -649,8 +733,31 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
     // ---------- push messages (from FcmService) ----------
 
+    private fun cellularCallActive(): Boolean {
+        if (app.checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+        return try {
+            val telephony = app.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            @Suppress("DEPRECATION")
+            telephony.callState != TelephonyManager.CALL_STATE_IDLE
+        } catch (e: Exception) {
+            MessageLog.add(app, "CALL", "cannot read cellular call state: $e")
+            false
+        }
+    }
+
     fun onPushIncoming(callId: String, fromId: Long, fromName: String, video: Boolean, expSeconds: Long) {
         if (!prefs.loggedIn || state != State.IDLE) return
+        if (cellularCallActive()) {
+            pendingRejectId = callId
+            pendingRejectReason = "busy"
+            main.removeCallbacks(clearReject)
+            main.postDelayed(clearReject, 20_000L)
+            MessageLog.add(app, "CALL", "incoming call rejected: cellular line is busy id=$callId")
+            ensureConnected()
+            return
+        }
         val remaining = if (expSeconds > 0) expSeconds * 1000L - System.currentTimeMillis() else 45_000L
         if (remaining <= 0) {
             MessageLog.add(app, "PUSH", "push for call $callId arrived too late, ignored")
@@ -705,9 +812,17 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
 
         // A decline that was waiting for the connection.
         if (pendingRejectId == id) {
+            val reason = pendingRejectReason
             pendingRejectId = null
+            pendingRejectReason = "rejected"
             main.removeCallbacks(clearReject)
-            send(JSONObject().put("t", "call.reject").put("call", id))
+            send(JSONObject().put("t", "call.reject").put("call", id).put("reason", reason))
+            maybeDisconnect()
+            return
+        }
+        if (cellularCallActive()) {
+            MessageLog.add(app, "CALL", "incoming call rejected: cellular line is busy id=$id")
+            send(JSONObject().put("t", "call.reject").put("call", id).put("reason", "busy"))
             maybeDisconnect()
             return
         }
@@ -1014,7 +1129,18 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         Notifications.cancelIncoming(app)
         engine?.close()
         engine = null
-        stopAudio()
+        if (reason == "busy" && c.outgoing) {
+            busyToneActive = true
+            startBusyTone()
+            main.removeCallbacks(busyToneStop)
+            main.postDelayed(busyToneStop, 2_500L)
+        } else {
+            if (busyToneActive) {
+                main.removeCallbacks(busyToneStop)
+                busyToneActive = false
+            }
+            stopAudio()
+        }
         CallService.stop(app)
         call = null
         ice = null
