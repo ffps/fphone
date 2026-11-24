@@ -438,7 +438,7 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.To <= 0 || req.To == sess.User.ID ||
-		strings.TrimSpace(req.Text) == "" || len([]rune(req.Text)) > 1000 {
+		strings.TrimSpace(req.Text) == "" || len([]rune(req.Text)) > 1000 || len(req.Text) > 3500 {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid recipient or message")
 		return
 	}
@@ -456,8 +456,12 @@ func (s *Server) handleMessagePush(w http.ResponseWriter, r *http.Request, sess 
 		writeErr(w, http.StatusServiceUnavailable, "no_push_devices", "contact has no Android devices with push enabled")
 		return
 	}
+	title := sess.User.Name
+	if title == "" {
+		title = sess.User.Login
+	}
 	data := map[string]string{
-		"type": "test", "title": recipient.Name, "text": req.Text,
+		"type": "test", "title": title, "text": req.Text,
 		"time": strconv.FormatInt(time.Now().UnixMilli(), 10),
 	}
 	type pushResult struct {
