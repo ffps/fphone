@@ -622,6 +622,10 @@ function handleSocketMessage(message) {
       if (message.calls?.length) {
         if (state.call) {
           if (!state.call.id) state.call.id = message.calls[0].id;
+          if (state.call.outgoing && message.calls[0].state === 'ringing') {
+            $('call-message').textContent = 'Вызов…';
+            startCallTone('ringback');
+          }
         } else {
           // A page reload destroys the WebRTC peer connection. Do not leave
           // the server-side call reserved for this device after reconnecting.
