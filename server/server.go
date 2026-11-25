@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/contacts", s.authed(s.handleContacts))
 	mux.HandleFunc("POST /api/v1/messages", s.authed(s.handleMessagePush))
 	mux.HandleFunc("POST /api/v1/messages/ack", s.rest(s.handleMessageAck))
+	mux.HandleFunc("POST /api/v1/calls/ack", s.rest(s.handleCallPushAck))
 	mux.HandleFunc("GET /api/v1/users/{id}/avatar", s.authed(s.handleAvatar))
 	mux.HandleFunc("GET /api/v1/me", s.authed(s.handleMeGet))
 	mux.HandleFunc("PUT /api/v1/me", s.authed(s.handleMe))
@@ -592,6 +593,23 @@ func (s *Server) handleMessageAck(w http.ResponseWriter, r *http.Request) {
 		go s.notifyMessageDelivered(senderID, deviceName)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": !newlyDelivered})
+}
+
+// handleCallPushAck confirms that a client received an incoming-call push.
+func (s *Server) handleCallPushAck(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CallID   string `json:"call_id"`
+		AckToken string `json:"ack_token"`
+	}
+	if !decodeJSON(w, r, &req) || len(req.CallID) > 64 || len(req.AckToken) > 128 || req.CallID == "" || req.AckToken == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid call acknowledgement")
+		return
+	}
+	if s.hub.calls == nil || !s.hub.calls.ConfirmPushAck(req.CallID, req.AckToken) {
+		writeErr(w, http.StatusNotFound, "unknown_call", "call acknowledgement not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // notifyMessageDelivered sends a push to all sender devices after one recipient device confirms delivery.
