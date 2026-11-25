@@ -663,7 +663,8 @@ input:focus {
 
 #active-actions {
   flex-wrap: nowrap;
-  gap: 14px;
+  align-items: center;
+  gap: 18px;
   width: max-content;
   max-width: 100%;
   flex: 0 0 auto;
@@ -685,20 +686,37 @@ input:focus {
   min-width: 64px;
   min-height: 64px;
 }
-@media(max-width:360px) {
+@media(max-width:420px) {
   #active-actions {
-    gap: 6px;
+    gap: 10px;
   }
   #active-actions .round-button {
-    width: 46px;
-    height: 46px;
-    min-width: 46px;
-    min-height: 46px;
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    min-height: 48px;
   }
   #active-actions .round-button#hangup-call {
     width: 58px;
     height: 58px;
     min-width: 58px;
     min-height: 58px;
+  }
+}
+@media(max-width:360px) {
+  #active-actions {
+    gap: 8px;
+  }
+  #active-actions .round-button {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  #active-actions .round-button#hangup-call {
+    width: 54px;
+    height: 54px;
+    min-width: 54px;
+    min-height: 54px;
   }
 }
