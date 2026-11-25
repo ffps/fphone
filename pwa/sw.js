@@ -1,4 +1,4 @@
-const CACHE = 'kukukha-pwa-v18';
+const CACHE = 'kukukha-pwa-v19';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)));
@@ -151,6 +151,25 @@ self.addEventListener('push', event => {
       timestamp: Date.now(),
       data: {call: data.call}
     });
+    if (data.ack_token) {
+      let failure = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const response = await fetch('/api/v1/calls/ack', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({call_id: data.call, ack_token: data.ack_token})
+          });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          failure = null;
+          break;
+        } catch (error) {
+          failure = error;
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+      }
+      if (failure) console.warn('Call push acknowledgement:', failure);
+    }
   })());
 });
 
