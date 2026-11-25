@@ -132,7 +132,13 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
         CallManager.State.OUTGOING -> if (calls.lastEndReason == "server_unavailable") {
             stringResource(R.string.reason_server_unavailable)
         } else {
-            stringResource(if (calls.ringing) R.string.call_ringing else R.string.call_calling)
+            stringResource(
+                when {
+                    info?.id.isNullOrEmpty() -> R.string.call_request
+                    calls.ringing -> R.string.call_ringing
+                    else -> R.string.call_waiting
+                }
+            )
         }
         CallManager.State.CONNECTING -> stringResource(R.string.call_connecting)
         CallManager.State.ACTIVE -> "%d:%02d".format(seconds / 60, seconds % 60)
