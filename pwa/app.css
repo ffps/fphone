@@ -690,7 +690,7 @@ input:focus {
   min-height: 64px;
 }
 @media(max-width:420px) {
-  #active-actions { column-gap: 16px; }
+  #active-actions { column-gap: 15px; }
   #active-actions .round-button {
     width: 48px;
     height: 48px;
