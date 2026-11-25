@@ -704,18 +704,3 @@ input:focus {
     min-height: 58px;
   }
 }
-@media(max-width:360px) {
-  #active-actions { column-gap: 12px; }
-  #active-actions .round-button {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    min-height: 44px;
-  }
-  #active-actions .round-button#hangup-call {
-    width: 54px;
-    height: 54px;
-    min-width: 54px;
-    min-height: 54px;
-  }
-}
