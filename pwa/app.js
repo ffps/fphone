@@ -891,7 +891,7 @@ async function acceptCall(withVideo) {
   stopCallTone();
   state.muted = false;
   state.cameraOn = withVideo && state.call.media === 'video';
-  state.speakerOn = state.cameraOn;
+  state.speakerOn = state.call.media === 'video';
   state.speakerAvailable = false;
   state.speakerDeviceId = '';
   try {
