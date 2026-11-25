@@ -927,10 +927,10 @@ async function startMedia(withVideo) {
     state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
     // Temporarily skip audio output setup while diagnosing Samsung Internet video preview freezes.
     if (withVideo) {
-      const track = state.localStream.getVideoTracks()[0];
-      state.cameraDeviceId = track?.getSettings().deviceId || '';
-      state.cameraFacingMode = track?.getSettings().facingMode || 'user';
-      await refreshCameraDevices();
+      // Temporarily disable camera enumeration and switching while diagnosing Samsung Internet preview freezes.
+      state.cameraDevices = [];
+      state.cameraDeviceId = '';
+      state.cameraFacingMode = 'user';
     }
   }
   state.localStream.getAudioTracks().forEach(track => track.enabled = !state.muted);
