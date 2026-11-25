@@ -6,12 +6,14 @@ const ICON_MIC = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 
 const ICON_MIC_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zM14.98 11.17 9 5.18V5a3 3 0 0 1 5.98-.17v6.17c0 .06 0 .11-.02.17zM4.27 3 3 4.27l6.01 6.01V11a3 3 0 0 0 3.64 2.92l1.66 1.66a5.3 5.3 0 0 1-8.61-4.58H5a7 7 0 0 0 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/></svg>';
 const ICON_CAMERA = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></svg>';
 const ICON_CAMERA_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 6.5-4 4V7a1 1 0 0 0-1-1H9.82L21 17.18zM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73z"/></svg>';
+const ICON_CAMERA_SWITCH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h9.17l-2.58-2.59L15 3l5 5-5 5-1.41-1.41L16.17 9H7a3 3 0 0 0-3 3v1H2v-1a5 5 0 0 1 5-5zm10 10H7.83l2.58 2.59L9 21l-5-5 5-5 1.41 1.41L7.83 15H17a3 3 0 0 0 3-3v-1h2v1a5 5 0 0 1-5 5z"/></svg>';
 const ICON_HANGUP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a1 1 0 0 1 0-1.41C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67a1 1 0 0 1 0 1.42l-2.48 2.48a1 1 0 0 1-1.41.01c-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1A16 16 0 0 0 12 9z"/></svg>';
 const state = {
   token: localStorage.getItem('kukukha.token') || '',
   deviceId: localStorage.getItem('kukukha.device') || makeId(),
   user: null, contacts: [], online: new Set(), ws: null, reconnectTimer: 0,
   call: null, pc: null, localStream: null, remoteStream: null,
+  cameraDevices: [], cameraDeviceId: '', cameraFacingMode: 'user',
   pendingCandidates: [], muted: false, cameraOn: false, selectedAvatar: null,
   selectedContact: null,
   wakeCall: new URLSearchParams(location.search).get('wake') || ''
@@ -915,15 +917,81 @@ async function startMedia(withVideo) {
   if (!state.localStream) {
     const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
     state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    if (withVideo) {
+      const track = state.localStream.getVideoTracks()[0];
+      state.cameraDeviceId = track?.getSettings().deviceId || '';
+      state.cameraFacingMode = 'user';
+      await refreshCameraDevices();
+    }
   }
   state.localStream.getAudioTracks().forEach(track => track.enabled = !state.muted);
   state.localStream.getVideoTracks().forEach(track => track.enabled = state.cameraOn);
   $('local-video').srcObject = state.cameraOn ? state.localStream : null;
+  updateLocalPreviewMirror();
   if (state.call?.ice) {
     await createPeer();
     addLocalTracks();
   }
   updateCallButtons();
+}
+
+async function refreshCameraDevices() {
+  try {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      state.cameraDevices = [];
+    } else {
+      state.cameraDevices = (await navigator.mediaDevices.enumerateDevices())
+        .filter(device => device.kind === 'videoinput');
+    }
+  } catch (_) {
+    state.cameraDevices = [];
+  }
+  $('camera-switch').classList.toggle('hidden',
+    !state.call || state.call.media !== 'video' || state.call.state === 'incoming' || state.cameraDevices.length < 2);
+}
+
+function updateLocalPreviewMirror() {
+  $('local-video').style.transform = state.cameraFacingMode === 'user' ? 'scaleX(-1)' : 'none';
+}
+
+async function switchCamera() {
+  if (!state.call || state.call.media !== 'video' || state.cameraDevices.length < 2 || !state.localStream) return;
+  const currentIndex = state.cameraDevices.findIndex(device => device.deviceId === state.cameraDeviceId);
+  const next = state.cameraDevices[(currentIndex + 1 + state.cameraDevices.length) % state.cameraDevices.length];
+  if (!next) return;
+  const button = $('camera-switch');
+  button.disabled = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {deviceId:{exact:next.deviceId},width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}}
+    });
+    const nextTrack = stream.getVideoTracks()[0];
+    if (!nextTrack) throw new Error('Камера не вернула видеопоток');
+    nextTrack.enabled = state.cameraOn;
+
+    const oldTrack = state.localStream.getVideoTracks()[0];
+    const sender = state.pc?.getSenders().find(item => item.track?.kind === 'video');
+    if (sender) await sender.replaceTrack(nextTrack);
+
+    if (oldTrack) state.localStream.removeTrack(oldTrack);
+    state.localStream.addTrack(nextTrack);
+    if (state.pc && !sender) state.pc.addTrack(nextTrack, state.localStream);
+    if (oldTrack) oldTrack.stop();
+
+    state.cameraDeviceId = next.deviceId;
+    state.cameraFacingMode = /back|rear|environment/i.test(next.label) ? 'environment' :
+      /front|user|facetime/i.test(next.label) ? 'user' :
+      (state.cameraFacingMode === 'user' ? 'environment' : 'user');
+    $('local-video').srcObject = state.cameraOn ? state.localStream : null;
+    updateLocalPreviewMirror();
+    button.title = 'Переключить камеру';
+  } catch (error) {
+    toast('Не удалось переключить камеру: ' + error.message);
+  } finally {
+    button.disabled = false;
+    await refreshCameraDevices();
+  }
 }
 
 function addLocalTracks() {
@@ -1004,6 +1072,8 @@ $('mute-call').addEventListener('click', () => {
   updateCallButtons();
 });
 
+$('camera-switch').addEventListener('click', switchCamera);
+
 $('camera-call').addEventListener('click', () => {
   if (state.call?.media !== 'video') return;
   state.cameraOn = !state.cameraOn;
@@ -1022,6 +1092,8 @@ function updateCallButtons() {
   camera.classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video');
   camera.innerHTML = state.cameraOn ? ICON_CAMERA : ICON_CAMERA_OFF;
   camera.title = state.cameraOn ? 'Выключить камеру' : 'Включить камеру'; camera.setAttribute('aria-label', camera.title);
+  $('camera-switch').innerHTML = ICON_CAMERA_SWITCH;
+  $('camera-switch').classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video' || state.cameraDevices.length < 2);
   $('hangup-call').innerHTML = ICON_HANGUP;
   $('hangup-call').title = 'Отбой';
   $('hangup-call').setAttribute('aria-label', 'Отбой');
@@ -1052,6 +1124,8 @@ function endCall(showMain = true, reason = 'hangup') {
   if (state.localStream) state.localStream.getTracks().forEach(track => track.stop());
   state.localStream = null; state.remoteStream = null; state.pendingCandidates = [];
   state.call = null; state.muted = false; state.cameraOn = false;
+  state.cameraDevices = []; state.cameraDeviceId = ''; state.cameraFacingMode = 'user';
+  $('local-video').style.transform = 'scaleX(-1)';
   hide('call-screen');
   if (showMain && state.token) show('main-screen');
   else if (state.token) show('main-screen');
