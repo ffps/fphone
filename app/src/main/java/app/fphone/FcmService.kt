@@ -39,27 +39,29 @@ class FcmService : FirebaseMessagingService() {
                 val name = d["from_name"] ?: ""
                 val video = d["media"] == "video"
                 val ackToken = d["ack_token"].orEmpty()
-                if (ackToken.isNotEmpty()) {
-                    Bg.run({
-                        var failure: Exception? = null
-                        for (attempt in 0 until 3) {
-                            try {
-                                applicationContext.app.net.ackCallPush(id, ackToken)
-                                failure = null
-                                break
-                            } catch (e: Exception) {
-                                failure = e
-                                if (attempt < 2) Thread.sleep(1000L * (attempt + 1))
+                main.post {
+                    calls.onPushIncoming(id, fromId, name, video, exp)
+                    if (ackToken.isNotEmpty()) {
+                        Bg.run({
+                            var failure: Exception? = null
+                            for (attempt in 0 until 3) {
+                                try {
+                                    applicationContext.app.net.ackCallPush(id, ackToken)
+                                    failure = null
+                                    break
+                                } catch (e: Exception) {
+                                    failure = e
+                                    if (attempt < 2) Thread.sleep(1000L * (attempt + 1))
+                                }
                             }
-                        }
-                        if (failure != null) throw failure!!
-                    }, { result ->
-                        result.exceptionOrNull()?.let {
-                            MessageLog.add(this, "PUSH", "call push acknowledgement failed: ${it.message}")
-                        }
-                    })
+                            if (failure != null) throw failure!!
+                        }, { result ->
+                            result.exceptionOrNull()?.let {
+                                MessageLog.add(this, "PUSH", "call push acknowledgement failed: ${it.message}")
+                            }
+                        })
+                    }
                 }
-                main.post { calls.onPushIncoming(id, fromId, name, video, exp) }
             }
             "call.cancelled" -> {
                 val id = d["call"] ?: return
