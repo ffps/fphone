@@ -13,6 +13,7 @@ const state = {
   user: null, contacts: [], online: new Set(), ws: null, reconnectTimer: 0,
   call: null, pc: null, localStream: null, remoteStream: null,
   pendingCandidates: [], muted: false, cameraOn: false, selectedAvatar: null,
+  selectedContact: null,
   wakeCall: new URLSearchParams(location.search).get('wake') || ''
 };
 localStorage.setItem('kukukha.device', state.deviceId);
@@ -496,6 +497,17 @@ function renderContacts() {
   $('contacts-empty').textContent = state.contacts.length ? 'Нет абонентов в сети' : 'Контактов пока нет';
   for (const contact of visibleContacts) {
     const row = document.createElement('div'); row.className = 'contact';
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-label', 'Подробнее: ' + (contact.name || contact.login));
+    row.addEventListener('click', () => openContactDetails(contact, latestCalls.get(Number(contact.id))));
+    row.addEventListener('keydown', event => {
+      if (event.target !== row) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openContactDetails(contact, latestCalls.get(Number(contact.id)));
+      }
+    });
     const avatar = document.createElement('img'); avatar.className = 'avatar'; avatar.alt = '';
     loadAvatar(contact.id, contact.avatar, avatar);
     const info = document.createElement('div'); info.className = 'contact-info';
@@ -515,10 +527,110 @@ function renderContacts() {
     }
     const call = document.createElement('button'); call.className = 'call-button'; call.type = 'button';
     call.innerHTML = ICON_CALL; call.title = 'Видеозвонок'; call.setAttribute('aria-label', 'Видеозвонок');
-    call.addEventListener('click', () => startCall(contact, 'video'));
+    call.addEventListener('click', event => { event.stopPropagation(); startCall(contact, 'video'); });
     row.append(avatar, info, call); list.append(row);
   }
 }
+
+function contactLastSeen(timestamp) {
+  if (!timestamp || timestamp <= 0) return 'давно не был в сети';
+  const date = new Date(Number(timestamp) * 1000);
+  const now = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const time = date.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+  if (sameDay(date, now)) return 'был в сети сегодня, ' + time;
+  if (sameDay(date, yesterday)) return 'был в сети вчера, ' + time;
+  return 'был в сети ' + date.toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric'}) + ', ' + time;
+}
+
+function openContactDetails(contact, lastCall) {
+  state.selectedContact = contact;
+  $('contact-dialog-name').textContent = contact.name || contact.login;
+  $('contact-dialog-login').textContent = '@' + (contact.login || '');
+  const online = state.online.has(Number(contact.id)) || contact.online;
+  $('contact-dialog-status').textContent = online ? 'Сейчас в сети' : contactLastSeen(contact.last_seen);
+  const image = $('contact-dialog-avatar');
+  image.src = 'icon-192.png';
+  loadAvatar(contact.id, contact.avatar, image);
+  const lastCallLine = $('contact-dialog-last-call');
+  if (lastCall) {
+    const kind = lastCall.media === 'video' ? 'видео' : 'аудио';
+    lastCallLine.textContent = 'Последний звонок: ' + historyResult(lastCall) + ' · ' + formatHistoryDate(lastCall.startedAt) + ' · ' + kind;
+    show('contact-dialog-last-call');
+  } else {
+    lastCallLine.textContent = '';
+    hide('contact-dialog-last-call');
+  }
+  $('contact-call').disabled = !!state.call || !state.ws || state.ws.readyState !== WebSocket.OPEN;
+  show('contact-modal');
+}
+
+function closeContactDetails() {
+  hide('contact-modal');
+  state.selectedContact = null;
+}
+
+$('contact-dialog-close').addEventListener('click', closeContactDetails);
+$('contact-modal').addEventListener('click', event => {
+  if (event.target === $('contact-modal')) closeContactDetails();
+});
+$('contact-call').addEventListener('click', () => {
+  const contact = state.selectedContact;
+  if (!contact) return;
+  closeContactDetails();
+  startCall(contact, 'video');
+});
+$('contact-message-open').addEventListener('click', () => {
+  if (!state.selectedContact) return;
+  $('message-dialog-title').textContent = 'Сообщение: ' + (state.selectedContact.name || state.selectedContact.login);
+  $('message-text').value = '';
+  $('message-error').textContent = '';
+  $('message-send').disabled = true;
+  show('message-modal');
+  $('message-text').focus();
+});
+$('message-text').addEventListener('input', () => {
+  $('message-send').disabled = !$('message-text').value.trim() || $('message-text').value.length > 1000;
+  $('message-error').textContent = '';
+});
+$('message-cancel').addEventListener('click', () => hide('message-modal'));
+$('message-modal').addEventListener('click', event => {
+  if (event.target === $('message-modal')) hide('message-modal');
+});
+$('message-send').addEventListener('click', async () => {
+  const contact = state.selectedContact;
+  const text = $('message-text').value.trim();
+  if (!contact || !text || text.length > 1000) return;
+  const button = $('message-send');
+  button.disabled = true;
+  $('message-cancel').disabled = true;
+  $('message-error').textContent = '';
+  try {
+    await api('/messages', {method:'POST', body:JSON.stringify({to:Number(contact.id), text})});
+    hide('message-modal');
+    closeContactDetails();
+    toast('Сообщение отправлено');
+  } catch (error) {
+    const messages = {
+      no_push_devices:'У абонента нет устройств с включёнными уведомлениями',
+      bad_request:'Сообщение слишком длинное или содержит недопустимый текст',
+      push_disabled:'Отправка сообщений на сервере не настроена',
+      unknown_user:'Контакт не найден',
+      push_failed:'Не удалось отправить сообщение'
+    };
+    $('message-error').textContent = messages[error.message] || 'Не удалось отправить сообщение';
+  } finally {
+    button.disabled = !$('message-text').value.trim();
+    $('message-cancel').disabled = false;
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  if (!$('message-modal').classList.contains('hidden')) hide('message-modal');
+  else if (!$('contact-modal').classList.contains('hidden')) closeContactDetails();
+});
 
 async function loadProfile() {
   try {
