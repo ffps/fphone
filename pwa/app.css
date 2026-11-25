@@ -664,8 +664,14 @@ input:focus {
 #active-actions {
   flex-wrap: nowrap;
   gap: 8px;
-  width: 100%;
-  justify-content: space-between;
+  width: max-content;
+  max-width: 100%;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+#active-actions > .round-button.hidden {
+  display: grid !important;
+  visibility: hidden;
 }
 #active-actions .round-button {
   width: 52px;
