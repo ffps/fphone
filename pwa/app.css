@@ -664,7 +664,7 @@ input:focus {
 #active-actions {
   flex-wrap: nowrap;
   align-items: center;
-  gap: 18px;
+  gap: 0;
   width: max-content;
   max-width: 100%;
   flex: 0 0 auto;
@@ -673,6 +673,9 @@ input:focus {
 #active-actions > .round-button.hidden {
   display: grid !important;
   visibility: hidden;
+}
+#active-actions > .round-button + .round-button {
+  margin-left: 18px;
 }
 #active-actions .round-button {
   width: 52px;
@@ -687,8 +690,8 @@ input:focus {
   min-height: 64px;
 }
 @media(max-width:420px) {
-  #active-actions {
-    gap: 10px;
+  #active-actions > .round-button + .round-button {
+    margin-left: 14px;
   }
   #active-actions .round-button {
     width: 48px;
@@ -704,8 +707,8 @@ input:focus {
   }
 }
 @media(max-width:360px) {
-  #active-actions {
-    gap: 8px;
+  #active-actions > .round-button + .round-button {
+    margin-left: 12px;
   }
   #active-actions .round-button {
     width: 44px;
