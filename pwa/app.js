@@ -920,7 +920,7 @@ async function startMedia(withVideo) {
     if (withVideo) {
       const track = state.localStream.getVideoTracks()[0];
       state.cameraDeviceId = track?.getSettings().deviceId || '';
-      state.cameraFacingMode = 'user';
+      state.cameraFacingMode = track?.getSettings().facingMode || 'user';
       await refreshCameraDevices();
     }
   }
@@ -980,9 +980,9 @@ async function switchCamera() {
     if (oldTrack) oldTrack.stop();
 
     state.cameraDeviceId = next.deviceId;
-    state.cameraFacingMode = /back|rear|environment/i.test(next.label) ? 'environment' :
+    state.cameraFacingMode = nextTrack.getSettings().facingMode || (/back|rear|environment/i.test(next.label) ? 'environment' :
       /front|user|facetime/i.test(next.label) ? 'user' :
-      (state.cameraFacingMode === 'user' ? 'environment' : 'user');
+      (state.cameraFacingMode === 'user' ? 'environment' : 'user'));
     $('local-video').srcObject = state.cameraOn ? state.localStream : null;
     updateLocalPreviewMirror();
     button.title = 'Переключить камеру';
