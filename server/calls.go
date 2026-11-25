@@ -293,7 +293,7 @@ func (m *Calls) ConfirmPushAck(callID, token string) bool {
 		call.State = stRinging
 		m.hub.SendToDevice(call.CallerDevice, map[string]any{"t": "call.ringing", "call": call.ID})
 	}
-	return call.State == stRinging
+	return true
 }
 
 // onPushFailed ends a call that nobody can be reached for: no push was delivered
