@@ -344,7 +344,7 @@ input:focus {
 }
 .call-actions {
   display: flex;
-  gap: 12px;
+  gap: 9px;
   justify-content: center;
   flex-wrap: wrap;
   padding: 12px 0;
@@ -641,4 +641,22 @@ input:focus {
 .round-button#camera-switch svg {
   width: 25px;
   height: 25px;
+}
+
+.round-button:disabled {
+  opacity: .35;
+}
+.round-button.speaker-on {
+  background: #23864e;
+  color: #fff;
+}
+.round-button.is-off {
+  background: #8b1e1e;
+  color: #fff;
+}
+.round-button#hangup-call {
+  width: 66px;
+  height: 66px;
+  min-width: 66px;
+  min-height: 66px;
 }
