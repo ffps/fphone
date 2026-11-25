@@ -97,6 +97,34 @@
         <button id="hangup-call" class="round-button reject" type="button" aria-label="Завершить вызов" title="Завершить вызов"></button>
       </div>
     </section>
+    <div id="contact-modal" class="modal-backdrop hidden" role="presentation">
+      <section class="contact-dialog" role="dialog" aria-modal="true" aria-labelledby="contact-dialog-name">
+        <button id="contact-dialog-close" class="modal-close" type="button" aria-label="Закрыть">×</button>
+        <img id="contact-dialog-avatar" class="contact-dialog-avatar" src="icon-192.png" alt="">
+        <h2 id="contact-dialog-name"></h2>
+        <p id="contact-dialog-login" class="contact-dialog-login"></p>
+        <p id="contact-dialog-status" class="contact-dialog-status"></p>
+        <p id="contact-dialog-last-call" class="contact-dialog-last-call hidden"></p>
+        <div class="contact-dialog-actions">
+          <button id="contact-message-open" class="primary contact-action" type="button">✉ Сообщение</button>
+          <button id="contact-call" class="primary contact-action" type="button">☎ Вызов</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="message-modal" class="modal-backdrop hidden" role="presentation">
+      <section class="message-dialog" role="dialog" aria-modal="true" aria-labelledby="message-dialog-title">
+        <h2 id="message-dialog-title">Сообщение</h2>
+        <label for="message-text">Текст сообщения</label>
+        <textarea id="message-text" rows="4" maxlength="1000" placeholder="Введите сообщение"></textarea>
+        <p id="message-error" class="error" role="alert"></p>
+        <div class="message-dialog-actions">
+          <button id="message-cancel" class="text-button" type="button">Отмена</button>
+          <button id="message-send" class="primary" type="button" disabled>Отправить</button>
+        </div>
+      </section>
+    </div>
+
     <div id="toast" class="toast hidden" role="status"></div>
   </main>
   <script src="app.js" defer></script>
