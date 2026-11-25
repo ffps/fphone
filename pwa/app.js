@@ -925,7 +925,7 @@ async function startMedia(withVideo) {
   if (!state.localStream) {
     const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
     state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    await refreshAudioOutputs();
+    // Temporarily skip audio output setup while diagnosing Samsung Internet video preview freezes.
     if (withVideo) {
       const track = state.localStream.getVideoTracks()[0];
       state.cameraDeviceId = track?.getSettings().deviceId || '';
