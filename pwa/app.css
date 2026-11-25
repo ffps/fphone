@@ -660,3 +660,39 @@ input:focus {
   min-width: 66px;
   min-height: 66px;
 }
+
+#active-actions {
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: 100%;
+  justify-content: space-between;
+}
+#active-actions .round-button {
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  min-height: 52px;
+}
+#active-actions .round-button#hangup-call {
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  min-height: 64px;
+}
+@media(max-width:360px) {
+  #active-actions {
+    gap: 6px;
+  }
+  #active-actions .round-button {
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+    min-height: 46px;
+  }
+  #active-actions .round-button#hangup-call {
+    width: 58px;
+    height: 58px;
+    min-width: 58px;
+    min-height: 58px;
+  }
+}
