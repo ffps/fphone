@@ -481,8 +481,11 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             "call.incoming" -> onIncoming(m)
             "call.ringing" -> {
                 if (m.optString("call") == call?.id) {
-                    ringing = true
-                    notifyChanged()
+                    if (!ringing) {
+                        ringing = true
+                        startRingback()
+                        notifyChanged()
+                    }
                 }
             }
             "call.accepted" -> onAccepted(m)
@@ -609,9 +612,8 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             return
         }
 
-        // Start the communication route before local ringback so it follows the selected speaker.
+        // Prepare the communication route; ringback starts only after the callee acknowledges the push.
         startAudio(video, if (fromRecents) false else null)
-        startRingback()
         val invite = JSONObject()
             .put("t", "call.invite")
             .put("to", peerId)
