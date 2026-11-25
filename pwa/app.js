@@ -7,6 +7,7 @@ const ICON_MIC_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 1
 const ICON_CAMERA = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></svg>';
 const ICON_CAMERA_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 6.5-4 4V7a1 1 0 0 0-1-1H9.82L21 17.18zM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73z"/></svg>';
 const ICON_CAMERA_SWITCH = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h9.17l-2.58-2.59L15 3l5 5-5 5-1.41-1.41L16.17 9H7a3 3 0 0 0-3 3v1H2v-1a5 5 0 0 1 5-5zm10 10H7.83l2.58 2.59L9 21l-5-5 5-5 1.41 1.41L7.83 15H17a3 3 0 0 0 3-3v-1h2v1a5 5 0 0 1-5 5z"/></svg>';
+const ICON_SPEAKER = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 4V5L7 9H3zm13.5 3a3.5 3.5 0 0 0-2-3.16v6.32a3.5 3.5 0 0 0 2-3.16zm-2-8.5v2.06a7 7 0 0 1 0 12.88v2.06a9 9 0 0 0 0-17z"/></svg>';
 const ICON_HANGUP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a1 1 0 0 1 0-1.41C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67a1 1 0 0 1 0 1.42l-2.48 2.48a1 1 0 0 1-1.41.01c-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1A16 16 0 0 0 12 9z"/></svg>';
 const state = {
   token: localStorage.getItem('kukukha.token') || '',
@@ -14,6 +15,7 @@ const state = {
   user: null, contacts: [], online: new Set(), ws: null, reconnectTimer: 0,
   call: null, pc: null, localStream: null, remoteStream: null,
   cameraDevices: [], cameraDeviceId: '', cameraFacingMode: 'user',
+  audioOutputs: [], speakerDeviceId: '', speakerAvailable: false, speakerOn: false,
   pendingCandidates: [], muted: false, cameraOn: false, selectedAvatar: null,
   selectedContact: null,
   wakeCall: new URLSearchParams(location.search).get('wake') || ''
@@ -803,6 +805,9 @@ async function startCall(contact, media) {
   if (state.call) return;
   state.muted = false;
   state.cameraOn = media === 'video';
+  state.speakerOn = media === 'video';
+  state.speakerAvailable = false;
+  state.speakerDeviceId = '';
   state.call = {id:'', peerId:contact.id, peerName:contact.name || contact.login, peerLogin:contact.login, media, outgoing:true, state:'calling', ice:null, startedAt:Date.now()};
   showCallScreen();
   $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Запрос…';
@@ -886,6 +891,9 @@ async function acceptCall(withVideo) {
   stopCallTone();
   state.muted = false;
   state.cameraOn = withVideo && state.call.media === 'video';
+  state.speakerOn = state.cameraOn;
+  state.speakerAvailable = false;
+  state.speakerDeviceId = '';
   try {
     await startMedia(state.cameraOn);
     state.call.state = 'connecting';
@@ -917,6 +925,7 @@ async function startMedia(withVideo) {
   if (!state.localStream) {
     const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
     state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    await refreshAudioOutputs();
     if (withVideo) {
       const track = state.localStream.getVideoTracks()[0];
       state.cameraDeviceId = track?.getSettings().deviceId || '';
@@ -1108,6 +1117,7 @@ $('mute-call').addEventListener('click', () => {
 });
 
 $('camera-switch').addEventListener('click', switchCamera);
+$('speaker-call').addEventListener('click', toggleSpeaker);
 
 $('camera-call').addEventListener('click', () => {
   if (state.call?.media !== 'video') return;
@@ -1118,17 +1128,77 @@ $('camera-call').addEventListener('click', () => {
   updateCallButtons();
 });
 
+async function refreshAudioOutputs() {
+  const audio = $('remote-audio');
+  state.audioOutputs = [];
+  state.speakerDeviceId = '';
+  state.speakerAvailable = false;
+  if (typeof audio.setSinkId !== 'function' || !navigator.mediaDevices?.enumerateDevices) {
+    updateCallButtons();
+    return;
+  }
+  try {
+    state.audioOutputs = (await navigator.mediaDevices.enumerateDevices())
+      .filter(device => device.kind === 'audiooutput');
+    const speaker = state.audioOutputs.find(device =>
+      device.deviceId !== 'default' && /speaker|loudspeaker|динамик|built.?in.*output/i.test(device.label));
+    if (speaker) {
+      state.speakerDeviceId = speaker.deviceId;
+      state.speakerAvailable = true;
+      if (state.call?.media === 'video' && state.speakerOn) {
+        await audio.setSinkId(speaker.deviceId);
+      } else {
+        await audio.setSinkId('default');
+      }
+    }
+  } catch (error) {
+    state.speakerAvailable = false;
+    state.speakerDeviceId = '';
+    console.warn('Audio output selection unavailable:', error);
+  }
+  updateCallButtons();
+}
+
+async function toggleSpeaker() {
+  if (!state.speakerAvailable || !state.speakerDeviceId) return;
+  const next = !state.speakerOn;
+  try {
+    await $('remote-audio').setSinkId(next ? state.speakerDeviceId : 'default');
+    state.speakerOn = next;
+    updateCallButtons();
+  } catch (error) {
+    toast('Не удалось переключить аудиовыход: ' + error.message);
+  }
+}
+
 function updateCallButtons() {
-  const mute = $('mute-call');
-  mute.classList.toggle('hidden', !state.call || state.call.state === 'incoming');
-  mute.innerHTML = state.muted ? ICON_MIC_OFF : ICON_MIC;
-  mute.title = state.muted ? 'Включить микрофон' : 'Выключить микрофон'; mute.setAttribute('aria-label', mute.title);
+  const switchButton = $('camera-switch');
+  switchButton.innerHTML = ICON_CAMERA_SWITCH;
+  switchButton.classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video' || state.cameraDevices.length < 2);
+
+  const speaker = $('speaker-call');
+  speaker.innerHTML = ICON_SPEAKER;
+  speaker.classList.toggle('speaker-on', state.speakerOn);
+  speaker.disabled = !state.speakerAvailable || !state.call || state.call.state === 'incoming';
+  speaker.title = state.speakerAvailable
+    ? (state.speakerOn ? 'Выключить громкую связь' : 'Включить громкую связь')
+    : 'Браузер не поддерживает переключение на динамик';
+  speaker.setAttribute('aria-label', speaker.title);
+
   const camera = $('camera-call');
   camera.classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video');
   camera.innerHTML = state.cameraOn ? ICON_CAMERA : ICON_CAMERA_OFF;
-  camera.title = state.cameraOn ? 'Выключить камеру' : 'Включить камеру'; camera.setAttribute('aria-label', camera.title);
-  $('camera-switch').innerHTML = ICON_CAMERA_SWITCH;
-  $('camera-switch').classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video' || state.cameraDevices.length < 2);
+  camera.classList.toggle('is-off', !state.cameraOn);
+  camera.title = state.cameraOn ? 'Выключить камеру' : 'Включить камеру';
+  camera.setAttribute('aria-label', camera.title);
+
+  const mute = $('mute-call');
+  mute.classList.toggle('hidden', !state.call || state.call.state === 'incoming');
+  mute.innerHTML = state.muted ? ICON_MIC_OFF : ICON_MIC;
+  mute.classList.toggle('is-off', state.muted);
+  mute.title = state.muted ? 'Включить микрофон' : 'Выключить микрофон';
+  mute.setAttribute('aria-label', mute.title);
+
   $('hangup-call').innerHTML = ICON_HANGUP;
   $('hangup-call').title = 'Отбой';
   $('hangup-call').setAttribute('aria-label', 'Отбой');
@@ -1160,6 +1230,8 @@ function endCall(showMain = true, reason = 'hangup') {
   state.localStream = null; state.remoteStream = null; state.pendingCandidates = [];
   state.call = null; state.muted = false; state.cameraOn = false;
   state.cameraDevices = []; state.cameraDeviceId = ''; state.cameraFacingMode = 'user';
+  state.audioOutputs = []; state.speakerDeviceId = ''; state.speakerAvailable = false; state.speakerOn = false;
+  $('remote-audio').setSinkId?.('default').catch(() => {});
   $('local-video').style.transform = 'scaleX(-1)';
   hide('call-screen');
   if (showMain && state.token) show('main-screen');
