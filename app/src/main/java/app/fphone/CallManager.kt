@@ -535,6 +535,10 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
             if (local != null && (local.id.isEmpty() || local.id == id)) {
                 local.id = id
                 pendingInvite = null
+                if (local.outgoing && c.optString("state") == "ringing" && !ringing) {
+                    ringing = true
+                    startRingback()
+                }
                 val newIce = c.optJSONObject("ice")
                 if (newIce != null) {
                     ice = newIce
