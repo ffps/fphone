@@ -643,13 +643,12 @@ function handleSocketMessage(message) {
         endCall(false, 'cancelled');
         break;
       }
-      $('call-state').textContent = 'Вызов'; $('call-message').textContent = 'Вызов абонента…';
-      startCallTone('ringback');
+      $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Ожидание…';
       break;
     case 'call.incoming': incomingCall(message); break;
     case 'call.ringing':
       if (state.call?.id === message.call) {
-        $('call-message').textContent = 'Ожидание ответа…';
+        $('call-message').textContent = 'Вызов…';
         if (state.call.outgoing) startCallTone('ringback');
       }
       break;
@@ -688,13 +687,13 @@ async function startCall(contact, media) {
   state.cameraOn = media === 'video';
   state.call = {id:'', peerId:contact.id, peerName:contact.name || contact.login, peerLogin:contact.login, media, outgoing:true, state:'calling', ice:null, startedAt:Date.now()};
   showCallScreen();
-  $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Подготовка устройств…';
+  $('call-state').textContent = 'Исходящий вызов'; $('call-message').textContent = 'Запрос…';
   $('call-kind').textContent = media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
   show('active-actions'); updateCallButtons();
   try {
     await startMedia(media === 'video');
     if (!state.call) return;
-    $('call-message').textContent = 'Вызов абонента…';
+    $('call-message').textContent = 'Запрос…';
     send({t:'call.invite', to:Number(contact.id), media});
   } catch (error) {
     toast('Не удалось включить микрофон или камеру: ' + error.message);
