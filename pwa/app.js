@@ -961,32 +961,67 @@ async function switchCamera() {
   if (!next) return;
   const button = $('camera-switch');
   button.disabled = true;
+  const oldTrack = state.localStream.getVideoTracks()[0];
+  const oldDeviceId = state.cameraDeviceId;
+  const sender = state.pc?.getSenders().find(item => item.track?.kind === 'video');
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {deviceId:{exact:next.deviceId},width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}}
-    });
+    // Mobile browsers often cannot open a second camera while the current one is active.
+    // Release the old camera before requesting the next device.
+    if (oldTrack) {
+      if (sender) await sender.replaceTrack(null);
+      state.localStream.removeTrack(oldTrack);
+      oldTrack.stop();
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {deviceId:{exact:next.deviceId},width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}}
+      });
+    } catch (firstError) {
+      // Some older Android camera stacks need facingMode instead of an exact deviceId.
+      const facing = state.cameraFacingMode === 'user' ? 'environment' : 'user';
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {facingMode:{exact:facing},width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}}
+      });
+    }
+
     const nextTrack = stream.getVideoTracks()[0];
     if (!nextTrack) throw new Error('Камера не вернула видеопоток');
     nextTrack.enabled = state.cameraOn;
-
-    const oldTrack = state.localStream.getVideoTracks()[0];
-    const sender = state.pc?.getSenders().find(item => item.track?.kind === 'video');
     if (sender) await sender.replaceTrack(nextTrack);
-
-    if (oldTrack) state.localStream.removeTrack(oldTrack);
+    else if (state.pc) state.pc.addTrack(nextTrack, state.localStream);
     state.localStream.addTrack(nextTrack);
-    if (state.pc && !sender) state.pc.addTrack(nextTrack, state.localStream);
-    if (oldTrack) oldTrack.stop();
 
-    state.cameraDeviceId = next.deviceId;
-    state.cameraFacingMode = nextTrack.getSettings().facingMode || (/back|rear|environment/i.test(next.label) ? 'environment' :
-      /front|user|facetime/i.test(next.label) ? 'user' :
-      (state.cameraFacingMode === 'user' ? 'environment' : 'user'));
+    const settings = nextTrack.getSettings();
+    state.cameraDeviceId = settings.deviceId || next.deviceId;
+    state.cameraFacingMode = settings.facingMode || (/back|rear|environment/i.test(next.label) ? 'environment' :
+      /front|user|facetime/i.test(next.label) ? 'user' : (state.cameraFacingMode === 'user' ? 'environment' : 'user'));
     $('local-video').srcObject = state.cameraOn ? state.localStream : null;
     updateLocalPreviewMirror();
     button.title = 'Переключить камеру';
   } catch (error) {
+    // If opening the new camera failed, try to restore the previous one.
+    try {
+      const restore = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: oldDeviceId
+          ? {deviceId:{exact:oldDeviceId},width:{ideal:640},height:{ideal:360}}
+          : {facingMode:{ideal:state.cameraFacingMode},width:{ideal:640},height:{ideal:360}}
+      });
+      const restoredTrack = restore.getVideoTracks()[0];
+      if (restoredTrack) {
+        restoredTrack.enabled = state.cameraOn;
+        if (sender) await sender.replaceTrack(restoredTrack);
+        else if (state.pc) state.pc.addTrack(restoredTrack, state.localStream);
+        state.localStream.addTrack(restoredTrack);
+        state.cameraDeviceId = restoredTrack.getSettings().deviceId || oldDeviceId;
+        $('local-video').srcObject = state.cameraOn ? state.localStream : null;
+        updateLocalPreviewMirror();
+      }
+    } catch (_) {}
     toast('Не удалось переключить камеру: ' + error.message);
   } finally {
     button.disabled = false;
