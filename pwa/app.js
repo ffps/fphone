@@ -925,12 +925,12 @@ async function startMedia(withVideo) {
   if (!state.localStream) {
     const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
     state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    // Temporarily skip audio output setup while diagnosing Samsung Internet video preview freezes.
+    await refreshAudioOutputs();
     if (withVideo) {
-      // Temporarily disable camera enumeration and switching while diagnosing Samsung Internet preview freezes.
-      state.cameraDevices = [];
-      state.cameraDeviceId = '';
-      state.cameraFacingMode = 'user';
+      const track = state.localStream.getVideoTracks()[0];
+      state.cameraDeviceId = track?.getSettings().deviceId || '';
+      state.cameraFacingMode = track?.getSettings().facingMode || 'user';
+      await refreshCameraDevices();
     }
   }
   state.localStream.getAudioTracks().forEach(track => track.enabled = !state.muted);
