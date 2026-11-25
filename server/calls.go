@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -55,7 +56,8 @@ type Call struct {
 	AcceptedAt   time.Time
 	ConnectedAt  time.Time
 
-	pushed map[int64]pushedTarget // devices that received a wake-up push
+	pushed       map[int64]pushedTarget // devices that received a wake-up push
+	pushAckToken string
 
 	ringTimer   *time.Timer
 	callerGrace *time.Timer // runs while the caller device has no WebSocket
@@ -219,8 +221,10 @@ func (m *Calls) wake(call *Call) bool {
 	if m.cfg.FCM.SendCallerName {
 		data["from_name"] = call.CallerName
 	}
+	call.pushAckToken = newCallID()
+	data["ack_token"] = call.pushAckToken
 	payloadData := map[string]any{
-		"type": "call.incoming", "call": call.ID, "from_id": call.CallerID, "to_id": call.CalleeID,
+		"type": "call.incoming", "call": call.ID, "ack_token": call.pushAckToken, "from_id": call.CallerID, "to_id": call.CalleeID,
 		"media": call.Media, "started_at": call.CreatedAt.Unix(), "exp": time.Now().Add(ttl).Unix(),
 		"title": "Входящий вызов", "body": "Откройте Кукуху, чтобы ответить",
 	}
@@ -273,6 +277,23 @@ func (m *Calls) sendPushes(callID, login string, targets map[int64]pushedTarget,
 	if ok == 0 {
 		m.onPushFailed(callID)
 	}
+}
+
+
+// ConfirmPushAck acknowledges that a recipient app received and processed the call push.
+// The random token is scoped to the in-memory call and expires when the call ends.
+func (m *Calls) ConfirmPushAck(callID, token string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	call := m.byID[callID]
+	if call == nil || call.pushAckToken == "" || subtle.ConstantTimeCompare([]byte(call.pushAckToken), []byte(token)) != 1 {
+		return false
+	}
+	if call.State == stCalling {
+		call.State = stRinging
+		m.hub.SendToDevice(call.CallerDevice, map[string]any{"t": "call.ringing", "call": call.ID})
+	}
+	return call.State == stRinging
 }
 
 // onPushFailed ends a call that nobody can be reached for: no push was delivered
@@ -462,8 +483,10 @@ func (m *Calls) simple(c *Client, typ, callID, rejectReason string) {
 			c.sendErr("bad_state", typ)
 			return
 		}
-		call.State = stRinging
-		m.hub.SendToDevice(call.CallerDevice, map[string]any{"t": "call.ringing", "call": call.ID})
+		if call.State == stCalling {
+			call.State = stRinging
+			m.hub.SendToDevice(call.CallerDevice, map[string]any{"t": "call.ringing", "call": call.ID})
+		}
 
 	case "call.accept":
 		if role != "callee" || !pending {
