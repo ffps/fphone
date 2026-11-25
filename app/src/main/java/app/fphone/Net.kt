@@ -213,6 +213,15 @@ class Net(private val prefs: Prefs) {
         )
     }
 
+    /** Acknowledge that this device received an incoming call push. */
+    fun ackCallPush(callId: String, ackToken: String) {
+        request(
+            "POST", "/calls/ack",
+            JSONObject().put("call_id", callId).put("ack_token", ackToken),
+            false
+        )
+    }
+
     fun contacts(): List<Contact> {
         val arr = request("GET", "/contacts", null, true).optJSONArray("contacts") ?: return emptyList()
         val out = ArrayList<Contact>()
