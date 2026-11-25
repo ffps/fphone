@@ -955,8 +955,7 @@ async function refreshCameraDevices() {
   } catch (_) {
     state.cameraDevices = [];
   }
-  $('camera-switch').classList.toggle('hidden',
-    !state.call || state.call.media !== 'video' || state.call.state === 'incoming' || state.cameraDevices.length < 2);
+  updateCallButtons();
 }
 
 function updateLocalPreviewMirror() {
@@ -1174,7 +1173,11 @@ async function toggleSpeaker() {
 function updateCallButtons() {
   const switchButton = $('camera-switch');
   switchButton.innerHTML = ICON_CAMERA_SWITCH;
-  switchButton.classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video' || state.cameraDevices.length < 2);
+  switchButton.disabled = !state.call || state.call.state === 'incoming' || state.call.media !== 'video' || state.cameraDevices.length < 2;
+  switchButton.title = state.cameraDevices.length < 2
+    ? 'Доступна только одна камера'
+    : 'Переключить камеру';
+  switchButton.setAttribute('aria-label', switchButton.title);
 
   const speaker = $('speaker-call');
   speaker.innerHTML = ICON_SPEAKER;
