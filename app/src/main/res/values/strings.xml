@@ -38,8 +38,10 @@
     <!-- Call screen -->
     <string name="call_incoming_audio">Входящий звонок</string>
     <string name="call_incoming_video">Входящий видеозвонок</string>
-    <string name="call_calling">Вызов…</string>
-    <string name="call_ringing">Звонит…</string>
+    <string name="call_request">Запрос…</string>
+    <string name="call_calling">Ожидание…</string>
+    <string name="call_waiting">Ожидание…</string>
+    <string name="call_ringing">Вызов…</string>
     <string name="call_connecting">Соединение…</string>
     <string name="btn_accept">Ответить</string>
     <string name="btn_decline">Отклонить</string>
