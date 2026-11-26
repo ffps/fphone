@@ -1191,14 +1191,14 @@ function updateCallButtons() {
   const camera = $('camera-call');
   camera.classList.toggle('hidden', !state.call || state.call.state === 'incoming' || state.call.media !== 'video');
   camera.innerHTML = state.cameraOn ? ICON_CAMERA : ICON_CAMERA_OFF;
-  camera.classList.toggle('is-off', !state.cameraOn);
+  camera.classList.toggle('speaker-on', state.cameraOn);
   camera.title = state.cameraOn ? 'Выключить камеру' : 'Включить камеру';
   camera.setAttribute('aria-label', camera.title);
 
   const mute = $('mute-call');
   mute.classList.toggle('hidden', !state.call || state.call.state === 'incoming');
   mute.innerHTML = state.muted ? ICON_MIC_OFF : ICON_MIC;
-  mute.classList.toggle('is-off', state.muted);
+  mute.classList.toggle('speaker-on', !state.muted);
   mute.title = state.muted ? 'Включить микрофон' : 'Выключить микрофон';
   mute.setAttribute('aria-label', mute.title);
 
