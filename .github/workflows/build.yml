@@ -146,8 +146,7 @@ jobs:
           target_commitish: main
           name: Кукуха ${{ steps.ver.outputs.version }}
           files: Kukukha-${{ steps.ver.outputs.version }}.apk
-          body_path: RELEASE_NOTES.md
-          generate_release_notes: false
+          generate_release_notes: true
 
       - name: Build check (debug APK)
         if: steps.ver.outputs.version == ''
