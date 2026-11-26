@@ -201,7 +201,7 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (videoCall) CallButton(
                         if (calls.cameraOn) R.drawable.ic_videocam else R.drawable.ic_videocam_off,
-                        "", if (calls.cameraOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                        "", if (calls.cameraOn) MaterialTheme.colorScheme.primary else Color(0xFF5F6368),
                         Color.White, 44.dp
                     ) { calls.toggleIncomingCamera() }
                     Spacer(Modifier.height(8.dp))
