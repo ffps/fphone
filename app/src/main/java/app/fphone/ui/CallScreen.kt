@@ -201,8 +201,8 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (videoCall) CallButton(
                         if (calls.cameraOn) R.drawable.ic_videocam else R.drawable.ic_videocam_off,
-                        "", if (calls.cameraOn) MaterialTheme.colorScheme.secondaryContainer else Color(0xFF8B1E1E),
-                        if (calls.cameraOn) MaterialTheme.colorScheme.onSecondaryContainer else Color.White, 44.dp
+                        "", if (calls.cameraOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                        Color.White, 44.dp
                     ) { calls.toggleIncomingCamera() }
                     Spacer(Modifier.height(8.dp))
                     CallButton(R.drawable.ic_call, "", CallGreen, Color.White, 72.dp) { onAccept() }
@@ -226,14 +226,14 @@ fun CallScreen(onAccept: () -> Unit, onToggleCamera: () -> Unit, onFinish: () ->
                 ) { calls.toggleSpeaker() }
                 if (videoCapable) CallButton(
                     if (calls.cameraOn) R.drawable.ic_videocam else R.drawable.ic_videocam_off, "",
-                    if (calls.cameraOn) idle else Color(0xFF8B1E1E),
-                    Color.White,
+                    if (calls.cameraOn) active else idle,
+                    idleContent,
                     52.dp
                 ) { onToggleCamera() }
                 CallButton(
                     if (calls.muted) R.drawable.ic_mic_off else R.drawable.ic_mic, "",
-                    if (calls.muted) Color(0xFF8B1E1E) else idle,
-                    Color.White,
+                    if (calls.muted) idle else active,
+                    idleContent,
                     52.dp
                 ) { calls.toggleMute() }
                 CallButton(R.drawable.ic_call_end, "", CallRed, Color.White, 64.dp) { calls.hangup() }
