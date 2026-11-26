@@ -650,10 +650,6 @@ input:focus {
   background: #23864e;
   color: #fff;
 }
-.round-button.is-off {
-  background: #8b1e1e;
-  color: #fff;
-}
 .round-button#hangup-call {
   width: 66px;
   height: 66px;
