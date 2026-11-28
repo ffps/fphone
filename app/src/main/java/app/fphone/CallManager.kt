@@ -683,8 +683,15 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
     }
 
     fun toggleMute() {
-        muted = !muted
-        engine?.setMuted(muted)
+        val requested = !muted
+        val currentEngine = engine
+        val applied = currentEngine?.setMuted(requested) ?: false
+        MessageLog.add(
+            app,
+            "AUDIO",
+            "microphone mute toggle requested=${requested} applied=${applied} engine=${currentEngine != null} call=${call?.id ?: "-"} state=${state}"
+        )
+        if (applied) muted = requested
         notifyChanged()
     }
 
