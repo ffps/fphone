@@ -1016,6 +1016,7 @@ async function switchCamera() {
     if (sender) await sender.replaceTrack(nextTrack);
     else if (state.pc) state.pc.addTrack(nextTrack, state.localStream);
     state.localStream.addTrack(nextTrack);
+    await applyVideoBitrate();
 
     const settings = nextTrack.getSettings();
     state.cameraDeviceId = settings.deviceId || next.deviceId;
@@ -1067,7 +1068,7 @@ async function applyVideoBitrate() {
   for (const sender of state.pc.getSenders()) {
     if (sender.track?.kind !== 'video') continue;
     const params = sender.getParameters();
-    if (!params.encodings?.length) params.encodings = [{}];
+    if (!params.encodings?.length) continue;
     params.encodings[0].maxBitrate = bitrate;
     params.encodings[0].maxFramerate = Number(state.media.fps);
     await sender.setParameters(params);
