@@ -37,7 +37,7 @@ import org.webrtc.audio.JavaAudioDeviceModule
  * Create it for a call, call start(), and close() it when the call is over.
  * Everything is called from the main thread, and events are delivered on the main thread.
  */
-class RtcEngine(private val ctx: Context, private val events: Events) {
+class RtcEngine(private val ctx: Context, private val events: Events, private val videoConfig: JSONObject) {
 
     interface Events {
         fun onLocalCandidate(sdpMid: String?, sdpMLineIndex: Int, candidate: String)
@@ -46,12 +46,6 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
     }
 
     companion object {
-        // Weak mobile networks: modest video, so that audio stays clear.
-        private const val VIDEO_WIDTH = 640
-        private const val VIDEO_HEIGHT = 360
-        private const val VIDEO_FPS = 20
-        private const val MAX_VIDEO_BPS = 450_000
-
         @Volatile
         private var initialized = false
 
@@ -166,10 +160,18 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
             events.onError("cannot open the camera")
             return
         }
+        val width = videoConfig.optInt("width")
+        val height = videoConfig.optInt("height")
+        val fps = videoConfig.optInt("fps")
+        if (width <= 0 || height <= 0 || fps <= 0) {
+            events.onError("video settings are not available from the server")
+            cap.dispose()
+            return
+        }
         val helper = SurfaceTextureHelper.create("capture-thread", egl.eglBaseContext)
         val source = f.createVideoSource(cap.isScreencast)
         cap.initialize(helper, ctx, source.capturerObserver)
-        cap.startCapture(VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS)
+        cap.startCapture(width, height, fps)
         val track = f.createVideoTrack("video0", source)
         p.addTrack(track, listOf("stream0"))
         capturer = cap
@@ -315,9 +317,12 @@ class RtcEngine(private val ctx: Context, private val events: Events) {
         for (s in p.senders) {
             if (s.track()?.kind() == MediaStreamTrack.VIDEO_TRACK_KIND) {
                 val params = s.parameters
+                val maxBitrate = videoConfig.optInt("max_bitrate")
+                val fps = videoConfig.optInt("fps")
+                if (maxBitrate <= 0 || fps <= 0) return
                 for (e in params.encodings) {
-                    e.maxBitrateBps = MAX_VIDEO_BPS
-                    e.maxFramerate = VIDEO_FPS
+                    e.maxBitrateBps = maxBitrate
+                    e.maxFramerate = fps
                 }
                 s.setParameters(params)
             }
