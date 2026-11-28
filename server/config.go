@@ -28,6 +28,7 @@ type Config struct {
 	Calls              CallsConfig   `yaml:"calls"`
 	FCM                FCMConfig     `yaml:"fcm"`
 	WebPush            WebPushConfig `yaml:"web_push"`
+	Media              MediaConfig   `yaml:"media"`
 }
 
 type TLSConfig struct {
@@ -65,6 +66,17 @@ type CallsConfig struct {
 	MaxActive             int `yaml:"max_active"`
 }
 
+type MediaConfig struct {
+	Video VideoConfig `yaml:"video"`
+}
+
+type VideoConfig struct {
+	Width      int `yaml:"width"`
+	Height     int `yaml:"height"`
+	FPS        int `yaml:"fps"`
+	MaxBitrate int `yaml:"max_bitrate"` // bits per second
+}
+
 type FCMConfig struct {
 	CredentialsFile string `yaml:"credentials_file"` // service account JSON; empty = push disabled
 	ProjectID       string `yaml:"project_id"`       // optional, normally read from the file
@@ -90,6 +102,7 @@ func defaultConfig() *Config {
 		},
 		Calls: CallsConfig{RingTimeoutSeconds: 60, ReconnectGraceSeconds: 30, MaxActive: 5},
 		FCM:   FCMConfig{SendCallerName: true},
+		Media: MediaConfig{Video: VideoConfig{Width: 640, Height: 360, FPS: 20, MaxBitrate: 450_000}},
 	}
 }
 
@@ -164,6 +177,12 @@ func (c *Config) validate() error {
 	}
 	if c.Calls.RingTimeoutSeconds < 5 || c.Calls.ReconnectGraceSeconds < 5 || c.Calls.MaxActive < 1 {
 		return errors.New("calls: ring_timeout_seconds and reconnect_grace_seconds must be >= 5, max_active must be >= 1")
+	}
+	if c.Media.Video.Width < 160 || c.Media.Video.Width > 1920 ||
+		c.Media.Video.Height < 120 || c.Media.Video.Height > 1080 ||
+		c.Media.Video.FPS < 1 || c.Media.Video.FPS > 60 ||
+		c.Media.Video.MaxBitrate < 10_000 || c.Media.Video.MaxBitrate > 10_000_000 {
+		return errors.New("media.video: width must be 160..1920, height 120..1080, fps 1..60 and max_bitrate 10000..10000000")
 	}
 	if (c.WebPush.PublicKey == "") != (c.WebPush.PrivateKey == "") {
 		return errors.New("web_push.public_key and web_push.private_key must be set together")
