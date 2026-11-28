@@ -927,9 +927,10 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         val c = call ?: return
         if (engine != null) return
         startAudio(c.video)
-        val e = RtcEngine(app, this)
-        engine = e
         try {
+            val videoConfig = try { JSONObject(prefs.videoConfig) } catch (_: Exception) { JSONObject() }
+            val e = RtcEngine(app, this, videoConfig)
+            engine = e
             val config = ice ?: JSONObject().put("servers", JSONArray()).put("policy", "all")
             e.start(config, c.videoCapable && cameraWanted && cameraOn, frontCameraWanted)
             e.setVideoEnabled(c.videoCapable && cameraWanted && cameraOn)
