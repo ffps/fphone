@@ -75,6 +75,15 @@ calls:
   reconnect_grace_seconds: 30  # how long a call survives a lost WebSocket of one side
   max_active: 5                # simultaneous calls
 
+# Video capture and sending limits used by Android and PWA clients.
+# max_bitrate is in bits per second (450000 = 450 kbit/s).
+media:
+  video:
+    width: 640
+    height: 360
+    fps: 20
+    max_bitrate: 450000
+
 # Push messages (Firebase Cloud Messaging) that wake a phone for an incoming call.
 # The server needs outgoing HTTPS access to oauth2.googleapis.com and fcm.googleapis.com.
 fcm:
