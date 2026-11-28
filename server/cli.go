@@ -281,8 +281,8 @@ func cmdDevice(cfg *Config, args []string) error {
 		}
 		return w.Flush()
 	case "log":
-		if len(args) != 2 {
-			return errors.New("usage: fphone device log ID")
+		if len(args) < 2 || len(args) > 3 {
+			return errors.New("usage: fphone device log ID [FILE]")
 		}
 		id, err := strconv.ParseInt(args[1], 10, 64)
 		if err != nil || id <= 0 {
@@ -307,6 +307,9 @@ func cmdDevice(cfg *Config, args []string) error {
 			return err
 		}
 		path := filepath.Join(cfg.DataDir, fmt.Sprintf("%d.log", id))
+		if len(args) == 3 {
+			path = args[2]
+		}
 		if err := os.WriteFile(path, []byte(logText), 0600); err != nil {
 			return err
 		}
