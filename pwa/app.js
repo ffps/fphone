@@ -784,7 +784,7 @@ function handleSocketMessage(message) {
       }
       break;
     case 'call.signal': handleSignal(message); break;
-    case 'call.media': if (state.call?.id === message.call) { state.call.media = message.media; $('call-kind').textContent = message.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок'; $('answer-video').classList.toggle('hidden', message.media !== 'video'); } break;
+    case 'call.media': if (state.call?.id === message.call) { state.call.media = message.media; $('call-kind').textContent = message.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок'; } break;
     case 'call.ended': if (state.call?.id === message.call) { const reason = message.reason; endCall(false, reason); toast(endReason(reason)); } break;
     case 'ice': if (state.call?.id === message.call && state.pc) state.pc.setConfiguration(rtcConfig(message.ice)); break;
     case 'error': handleServerError(message); break;
@@ -838,7 +838,6 @@ function incomingCall(message) {
   $('call-state').textContent = 'Входящий вызов'; $('call-message').textContent = 'Вам звонят';
   $('call-kind').textContent = call.media === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
   show('incoming-actions'); hide('active-actions');
-  $('answer-video').classList.toggle('hidden', call.media !== 'video');
 }
 
 function showCallScreen() {
@@ -883,17 +882,15 @@ function resetPreviewPosition() {
   preview.addEventListener('pointercancel', stop);
 })();
 
-$('answer-audio').addEventListener('click', () => acceptCall(false));
-
-$('answer-video').addEventListener('click', () => acceptCall(true));
+$('answer-call').addEventListener('click', () => acceptCall());
 
 $('reject-call').addEventListener('click', () => { if (state.call) send({t:'call.reject', call:state.call.id}); endCall(false, 'rejected'); });
 
-async function acceptCall(withVideo) {
+async function acceptCall() {
   if (!state.call || state.call.outgoing) return;
   stopCallTone();
   state.muted = false;
-  state.cameraOn = withVideo && state.call.media === 'video';
+  state.cameraOn = state.call.media === 'video';
   state.speakerOn = state.call.media === 'video';
   state.speakerAvailable = false;
   state.speakerDeviceId = '';
