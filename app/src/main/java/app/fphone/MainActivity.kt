@@ -189,6 +189,15 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
 
     // ---------- login / logout / update ----------
 
+    private fun logMediaConfig(config: org.json.JSONObject) {
+        MessageLog.add(
+            this,
+            "MEDIA",
+            "server video config: ${config.optInt("width")}x${config.optInt("height")}, " +
+                "${config.optInt("fps")} fps, max_bitrate=${config.optInt("max_bitrate")} bps"
+        )
+    }
+
     private fun refreshMediaConfigAtStartup() {
         if (!app.prefs.loggedIn || mediaConfigLoading) return
         mediaConfigLoading = true
@@ -197,6 +206,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
             result.onSuccess { profile ->
                 profile.optJSONObject("media")?.optJSONObject("video")?.let {
                     app.prefs.videoConfig = it.toString()
+                    logMediaConfig(it)
                 }
             }
             result.onFailure { e -> MessageLog.add(this, "MEDIA", "cannot refresh video settings: $e") }
@@ -249,6 +259,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
                     val u = j.getJSONObject("user")
                     profile.optJSONObject("media")?.optJSONObject("video")?.let {
                         prefs.videoConfig = it.toString()
+                        logMediaConfig(it)
                     }
                     prefs.saveSession(j.getString("token"), u.getLong("id"), u.optString("name"), login.trim())
                     if (fcm.isNotEmpty()) {
