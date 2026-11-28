@@ -220,11 +220,13 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
                 if (token.isNotBlank()) app.calls.updatePushToken(token)
                 else {
                     app.prefs.pushIssue = true
+                    MessageLog.add(this, "PUSH", "startup token fetch failed; keeping previous token: ${task.exception}")
                     app.uiTick.intValue++
                 }
             }
         } catch (e: Exception) {
             app.prefs.pushIssue = true
+            MessageLog.add(this, "PUSH", "Firebase unavailable at startup; keeping previous token: $e")
             app.uiTick.intValue++
         }
     }
@@ -277,12 +279,14 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
                 if (token.isNotBlank()) submit(token)
                 else {
                     prefs.pushIssue = true
+                    MessageLog.add(this, "PUSH", "Firebase token fetch failed during login; using previous token if available: ${task.exception}")
                     app.uiTick.intValue++
                     submit(prefs.fcmToken)
                 }
             }
         } catch (e: Exception) {
             prefs.pushIssue = true
+            MessageLog.add(this, "PUSH", "Firebase unavailable during login; using previous token if available: $e")
             app.uiTick.intValue++
             submit(prefs.fcmToken)
         }
