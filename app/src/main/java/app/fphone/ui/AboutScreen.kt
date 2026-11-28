@@ -30,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -91,7 +90,7 @@ fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
             title = { Text("Журнал") },
             text = {
                 Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    Text(logText + "\n\nFCM token:\n" + prefs.fcmToken, fontFamily = FontFamily.Monospace)
+                    Text(logText, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                 }
             },
             confirmButton = {
@@ -101,7 +100,7 @@ fun AboutScreen(onUpdate: () -> Unit, onBack: () -> Unit) {
                 Column {
                     TextButton(onClick = {
                         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("Кукуха log", logText + "\n\nFCM token:\n" + prefs.fcmToken))
+                        cm.setPrimaryClip(ClipData.newPlainText("Кукуха log", logText))
                     }) { Text("Скопировать всё") }
                     TextButton(onClick = {
                         MessageLog.clear(ctx)
