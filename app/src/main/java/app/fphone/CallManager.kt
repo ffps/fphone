@@ -198,7 +198,6 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
         }
         prefs.pendingFcmToken = token
         prefs.pushIssue = true
-        MessageLog.add(app, "PUSH", "new token stored locally; server registration pending (${token.length} chars)")
         syncPendingPushToken()
         notifyChanged()
     }
@@ -965,6 +964,7 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                     connectedSince = SystemClock.elapsedRealtime()
                     send(JSONObject().put("t", "call.connected").put("call", c.id))
                     engine?.limitBitrate()
+                    engine?.startVideoStatsLogging()
                     engine?.logSelectedPair { MessageLog.add(app, it) }
                     ensureLocalVideoTrack()
                     notifyChanged()
