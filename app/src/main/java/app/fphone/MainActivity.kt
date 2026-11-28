@@ -69,7 +69,10 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         dynamicColor.value = app.prefs.dynamicColor
         startTab.intValue = intent.getIntExtra(EXTRA_TAB, 0)
         if (startTab.intValue == 1) Notifications.clearMissed(this)
-        if (app.prefs.loggedIn) refreshFcmTokenAtStartup()
+        if (app.prefs.loggedIn) {
+            refreshFcmTokenAtStartup()
+            refreshMediaConfigAtStartup()
+        }
         setContent {
             val prefs = rememberApp().prefs
             FPhoneTheme(dynamicColor.value, forceLight = !prefs.loggedIn) {
@@ -180,6 +183,17 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
 
     // ---------- login / logout / update ----------
 
+    private fun refreshMediaConfigAtStartup() {
+        Bg.run({ app.net.myProfile() }) { result ->
+            result.onSuccess { profile ->
+                profile.optJSONObject("media")?.optJSONObject("video")?.let {
+                    app.prefs.videoConfig = it.toString()
+                }
+            }
+            result.onFailure { e -> MessageLog.add(this, "MEDIA", "cannot refresh video settings: $e") }
+        }
+    }
+
     private fun refreshFcmTokenAtStartup() {
         try {
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
@@ -216,10 +230,17 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
         val submit: (String) -> Unit = { fcm ->
             if (fcm.isNotEmpty()) prefs.fcmToken = fcm
             val deviceName = Build.MANUFACTURER + " " + Build.MODEL
-            Bg.run({ app.net.login(login.trim(), password, deviceName, fcm) }) { r ->
+            Bg.run({
+                val j = app.net.login(login.trim(), password, deviceName, fcm)
+                val profile = app.net.myProfile(j.getString("token"))
+                Pair(j, profile)
+            }) { r ->
                 loginBusy.value = false
-                r.onSuccess { j ->
+                r.onSuccess { (j, profile) ->
                     val u = j.getJSONObject("user")
+                    profile.optJSONObject("media")?.optJSONObject("video")?.let {
+                        prefs.videoConfig = it.toString()
+                    }
                     prefs.saveSession(j.getString("token"), u.getLong("id"), u.optString("name"), login.trim())
                     if (fcm.isNotEmpty()) {
                         prefs.registeredFcmToken = fcm
