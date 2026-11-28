@@ -36,6 +36,11 @@ class Prefs(ctx: Context) {
         get() = str("user_name")
         set(v) = put("user_name", v)
 
+    /** Video capture and sender limits received from GET /me. */
+    var videoConfig: String
+        get() = str("video_config")
+        set(v) = put("video_config", v)
+
     /** Last push token that Firebase gave to this installation. */
     var fcmToken: String
         get() = str("fcm_token")
