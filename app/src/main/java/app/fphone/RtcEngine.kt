@@ -302,9 +302,47 @@ class RtcEngine(private val ctx: Context, private val events: Events, private va
 
     // ---------- controls ----------
 
-    fun setMuted(muted: Boolean) {
-        // Mute capture without disabling the track or restarting AudioRecord.
-        adm?.setMicrophoneMute(muted)
+    private var microphoneMuted = false
+
+    fun setMuted(muted: Boolean): Boolean {
+        val module = adm
+        val track = audioTrack
+        var admApplied = false
+        var trackApplied = false
+
+        try {
+            if (module != null) {
+                module.setMicrophoneMute(muted)
+                admApplied = true
+            }
+        } catch (e: Exception) {
+            MessageLog.add(ctx, "AUDIO", "ADM microphone mute failed: $e")
+        }
+
+        try {
+            if (track != null) {
+                track.setEnabled(!muted)
+                trackApplied = true
+            }
+        } catch (e: Exception) {
+            MessageLog.add(ctx, "AUDIO", "audio track mute failed: $e")
+        }
+
+        val applied = admApplied && trackApplied
+        if (applied) {
+            microphoneMuted = muted
+        } else {
+            // Keep the previous known state if either mute mechanism failed.
+            try { module?.setMicrophoneMute(microphoneMuted) } catch (_: Exception) { }
+            try { track?.setEnabled(!microphoneMuted) } catch (_: Exception) { }
+        }
+
+        MessageLog.add(
+            ctx,
+            "AUDIO",
+            "microphone mute requested=${muted} applied=${applied} adm=${module != null}/${admApplied} audioTrack=${track != null}/${trackApplied}"
+        )
+        return applied
     }
 
     fun setVideoEnabled(on: Boolean) {
