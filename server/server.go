@@ -699,6 +699,14 @@ func (s *Server) handleMeGet(w http.ResponseWriter, r *http.Request, sess *Sessi
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user":   sess.User,
 		"avatar": s.avatarVersion(sess.User.ID),
+		"media": map[string]any{
+			"video": map[string]int{
+				"width":       s.cfg.Media.Video.Width,
+				"height":      s.cfg.Media.Video.Height,
+				"fps":         s.cfg.Media.Video.FPS,
+				"max_bitrate": s.cfg.Media.Video.MaxBitrate,
+			},
+		},
 	})
 }
 
