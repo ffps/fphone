@@ -168,7 +168,7 @@ class Net(private val prefs: Prefs) {
         return result
     }
 
-    fun myProfile(): JSONObject = request("GET", "/me", null, true)
+    fun myProfile(token: String? = null): JSONObject = request("GET", "/me", null, true, token)
 
     fun updateName(name: String): JSONObject =
         request("PUT", "/me", JSONObject().put("name", name), true)
