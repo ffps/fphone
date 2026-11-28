@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     private val loginError = mutableStateOf<String?>(null)
     private val startTab = mutableIntStateOf(0)
     private var installRequested = false
+    private var mediaConfigLoading = false
     private data class PendingCall(val peerId: Long, val name: String, val video: Boolean, val fromRecents: Boolean)
     private var pendingCall: PendingCall? = null
 
@@ -165,6 +166,11 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     }
 
     private fun callClicked(peerId: Long, name: String, video: Boolean, fromRecents: Boolean) {
+        if ((video || fromRecents) && app.prefs.videoConfig.isBlank()) {
+            Toast.makeText(this, "Настройки видео ещё загружаются. Повторите вызов.", Toast.LENGTH_SHORT).show()
+            refreshMediaConfigAtStartup()
+            return
+        }
         val need = ArrayList<String>()
         if (!granted(Manifest.permission.RECORD_AUDIO)) need.add(Manifest.permission.RECORD_AUDIO)
         if (video && !granted(Manifest.permission.CAMERA)) need.add(Manifest.permission.CAMERA)
@@ -184,7 +190,10 @@ class MainActivity : ComponentActivity(), CallManager.Listener, Updater.Listener
     // ---------- login / logout / update ----------
 
     private fun refreshMediaConfigAtStartup() {
+        if (!app.prefs.loggedIn || mediaConfigLoading) return
+        mediaConfigLoading = true
         Bg.run({ app.net.myProfile() }) { result ->
+            mediaConfigLoading = false
             result.onSuccess { profile ->
                 profile.optJSONObject("media")?.optJSONObject("video")?.let {
                     app.prefs.videoConfig = it.toString()
