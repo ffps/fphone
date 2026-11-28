@@ -32,7 +32,7 @@ Usage: fphone [-c fphone.yaml] <command>
   user del [-y] LOGIN          delete a user
   device list [LOGIN]          list devices
   device revoke ID             revoke the token of a device
-  device log ID                download the diagnostic log from an online phone
+  device log ID [FILE]         download the diagnostic log from an online phone
   user name LOGIN [NAME]       show or change a user's display name
   fingerprint                  show the certificate fingerprint to pin in the client
   push-test [-validate-only] [TOKEN|id=ID|login=LOGIN] [title=TITLE] [text=TEXT]
