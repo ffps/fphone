@@ -76,6 +76,8 @@ calls:
   max_active: 5                # simultaneous calls
 
 # Video capture and sending limits used by Android and PWA clients.
+# Common width x height presets: 320x240 (QVGA), 640x360 (nHD), 640x480 (VGA),
+# 1280x720 (HD/720p), 1920x1080 (Full HD/1080p).
 # max_bitrate is in bits per second (450000 = 450 kbit/s).
 media:
   video:
