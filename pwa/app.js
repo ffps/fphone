@@ -12,7 +12,7 @@ const ICON_HANGUP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9c
 const state = {
   token: localStorage.getItem('kukukha.token') || '',
   deviceId: localStorage.getItem('kukukha.device') || makeId(),
-  user: null, contacts: [], online: new Set(), ws: null, reconnectTimer: 0,
+  user: null, media: null, contacts: [], online: new Set(), ws: null, reconnectTimer: 0,
   call: null, pc: null, localStream: null, remoteStream: null,
   cameraDevices: [], cameraDeviceId: '', cameraFacingMode: 'user',
   audioOutputs: [], speakerDeviceId: '', speakerAvailable: false, speakerOn: false,
@@ -225,8 +225,10 @@ $('login-form').addEventListener('submit', async event => {
     const data = await result.json();
     if (!result.ok) throw new Error(data?.error?.code || 'Не удалось войти');
     state.token = data.token;
-    state.user = data.user;
     localStorage.setItem('kukukha.token', state.token);
+    const profile = await api('/me');
+    state.user = profile.user;
+    state.media = profile.media?.video || null;
     $('password').value = '';
     enterApp();
   } catch (error) { $('login-error').textContent = loginError(error.message); }
@@ -640,6 +642,7 @@ async function loadProfile() {
   try {
     const data = await api('/me');
     state.user = data.user;
+    state.media = data.media?.video || null;
     $('my-name').value = data.user.name || '';
     await loadAvatar(data.user.id, data.avatar, $('my-avatar'));
   } catch (error) { toast(error.message); }
@@ -921,9 +924,20 @@ async function createPeerAndOffer() {
 }
 
 // Ask for microphone and camera access.
+function videoConstraints(extra = {}) {
+  const video = state.media;
+  if (!video) throw new Error('Настройки видео не получены с сервера');
+  return {
+    ...extra,
+    width:{ideal:video.width},
+    height:{ideal:video.height},
+    frameRate:{ideal:video.fps,max:video.fps}
+  };
+}
+
 async function startMedia(withVideo) {
   if (!state.localStream) {
-    const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}} : false};
+    const constraints = {audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}, video:withVideo ? {facingMode:'user',...videoConstraints()} : false};
     state.localStream = await navigator.mediaDevices.getUserMedia(constraints);
     await refreshAudioOutputs();
     if (withVideo) {
@@ -985,14 +999,14 @@ async function switchCamera() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {deviceId:{exact:next.deviceId},width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}}
+        video: videoConstraints({deviceId:{exact:next.deviceId}})
       });
     } catch (firstError) {
       // Some older Android camera stacks need facingMode instead of an exact deviceId.
       const facing = state.cameraFacingMode === 'user' ? 'environment' : 'user';
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {facingMode:{exact:facing},width:{ideal:640},height:{ideal:360},frameRate:{ideal:20,max:24}}
+        video: videoConstraints({facingMode:{exact:facing}})
       });
     }
 
@@ -1016,8 +1030,8 @@ async function switchCamera() {
       const restore = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: oldDeviceId
-          ? {deviceId:{exact:oldDeviceId},width:{ideal:640},height:{ideal:360}}
-          : {facingMode:{ideal:state.cameraFacingMode},width:{ideal:640},height:{ideal:360}}
+          ? videoConstraints({deviceId:{exact:oldDeviceId}})
+          : videoConstraints({facingMode:{ideal:state.cameraFacingMode}})
       });
       const restoredTrack = restore.getVideoTracks()[0];
       if (restoredTrack) {
@@ -1043,6 +1057,20 @@ function addLocalTracks() {
     if (!state.pc.getSenders().some(sender => sender.track?.id === track.id)) {
       state.pc.addTrack(track, state.localStream);
     }
+  }
+  applyVideoBitrate().catch(error => console.warn('Video bitrate limit:', error));
+}
+
+async function applyVideoBitrate() {
+  const bitrate = Number(state.media?.max_bitrate);
+  if (!state.pc || !Number.isFinite(bitrate) || bitrate <= 0) return;
+  for (const sender of state.pc.getSenders()) {
+    if (sender.track?.kind !== 'video') continue;
+    const params = sender.getParameters();
+    if (!params.encodings?.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = bitrate;
+    params.encodings[0].maxFramerate = Number(state.media.fps);
+    await sender.setParameters(params);
   }
 }
 
@@ -1341,7 +1369,11 @@ async function disableWebPush() {
 }
 
 if (state.token) {
-  api('/me').then(data => { state.user = data.user; enterApp(); }).catch(() => {});
+  api('/me').then(data => {
+    state.user = data.user;
+    state.media = data.media?.video || null;
+    enterApp();
+  }).catch(() => {});
 }
 
 setInterval(() => { if (state.ws?.readyState === WebSocket.OPEN) send({t:'ping'}); }, 20000);
