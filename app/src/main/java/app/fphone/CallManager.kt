@@ -214,11 +214,9 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                 if (prefs.pendingFcmToken == token) prefs.pendingFcmToken = ""
                 prefs.pushIssue = false
                 prefs.lastFcmRefreshAt = System.currentTimeMillis()
-                MessageLog.add(app, "PUSH", "server confirmed FCM token registration")
             }
             result.onFailure { e ->
                 prefs.pushIssue = true
-                MessageLog.add(app, "PUSH", "token registration failed; retry scheduled: $e")
                 main.removeCallbacks(retryPushRegistration)
                 main.postDelayed(retryPushRegistration, 15_000L)
             }
@@ -236,14 +234,12 @@ class CallManager(private val app: App) : Signaling.Listener, RtcEngine.Events {
                 if (token.isNotBlank()) updatePushToken(token)
                 else {
                     prefs.pushIssue = true
-                    MessageLog.add(app, "PUSH", "monthly token refresh failed; keeping previous token: ${task.exception}")
                     notifyChanged()
                 }
             }
         } catch (e: Exception) {
             refreshingFcm = false
             prefs.pushIssue = true
-            MessageLog.add(app, "PUSH", "monthly token refresh unavailable; keeping previous token: $e")
             notifyChanged()
         }
     }
