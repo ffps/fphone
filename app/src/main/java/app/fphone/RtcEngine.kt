@@ -303,6 +303,7 @@ class RtcEngine(private val ctx: Context, private val events: Events, private va
         startCamera(f, p, frontCamera)
         val track = videoTrack ?: return false
         track.setEnabled(true)
+        limitBitrate()
         return true
     }
 
