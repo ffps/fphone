@@ -18,6 +18,7 @@ class FcmService : FirebaseMessagingService() {
     }
 
     override fun onNewToken(token: String) {
+        MessageLog.add(this, "PUSH", "Firebase issued a new token (${token.length} chars)")
         val calls = applicationContext.app.calls
         Handler(Looper.getMainLooper()).post { calls.updatePushToken(token) }
     }
