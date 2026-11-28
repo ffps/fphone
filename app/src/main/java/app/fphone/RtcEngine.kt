@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import org.json.JSONObject
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -63,6 +64,17 @@ class RtcEngine(private val ctx: Context, private val events: Events, private va
     }
 
     private val main = Handler(Looper.getMainLooper())
+    private val videoStatsHandler = Handler(Looper.getMainLooper())
+    private var videoStatsStarted = false
+    private var lastVideoBytesSent: Long? = null
+    private var lastVideoStatsAt = 0L
+    private val videoStatsTask = object : Runnable {
+        override fun run() {
+            if (closed) return
+            logVideoStats()
+            videoStatsHandler.postDelayed(this, 5_000L)
+        }
+    }
     private val egl: EglBase = EglBase.create()
 
     /** Needed to initialize the video views (SurfaceViewRenderer). */
@@ -171,6 +183,11 @@ class RtcEngine(private val ctx: Context, private val events: Events, private va
         val helper = SurfaceTextureHelper.create("capture-thread", egl.eglBaseContext)
         val source = f.createVideoSource(cap.isScreencast)
         cap.initialize(helper, ctx, source.capturerObserver)
+        MessageLog.add(
+            ctx,
+            "MEDIA",
+            "camera capture requested: $name, ${width}x${height} at ${fps} fps"
+        )
         cap.startCapture(width, height, fps)
         val track = f.createVideoTrack("video0", source)
         p.addTrack(track, listOf("stream0"))
@@ -325,7 +342,55 @@ class RtcEngine(private val ctx: Context, private val events: Events, private va
                     e.maxBitrateBps = maxBitrate
                     e.maxFramerate = fps
                 }
-                s.setParameters(params)
+                val applied = s.setParameters(params)
+                MessageLog.add(
+                    ctx,
+                    "MEDIA",
+                    "video sender limit: max_bitrate=$maxBitrate bps, max_fps=$fps, applied=$applied"
+                )
+            }
+        }
+    }
+
+    /** Logs actual outbound video dimensions and measured bitrate every five seconds. */
+    fun startVideoStatsLogging() {
+        if (videoStatsStarted || closed) return
+        videoStatsStarted = true
+        lastVideoBytesSent = null
+        lastVideoStatsAt = 0L
+        videoStatsHandler.post(videoStatsTask)
+    }
+
+    private fun logVideoStats() {
+        val p = pc ?: return
+        p.getStats { report ->
+            if (closed) return@getStats
+            try {
+                val outbound = report.statsMap.values.firstOrNull {
+                    it.type == "outbound-rtp" &&
+                        ((it.members["kind"] ?: it.members["mediaType"]) as? String) == "video"
+                } ?: return@getStats
+
+                val members = outbound.members
+                val width = (members["frameWidth"] as? Number)?.toInt() ?: 0
+                val height = (members["frameHeight"] as? Number)?.toInt() ?: 0
+                val fps = (members["framesPerSecond"] as? Number)?.toInt() ?: 0
+                val bytes = (members["bytesSent"] as? Number)?.toLong()
+                val now = SystemClock.elapsedRealtime()
+                val previousBytes = lastVideoBytesSent
+                val previousAt = lastVideoStatsAt
+                lastVideoBytesSent = bytes
+                lastVideoStatsAt = now
+
+                val bitrate = if (bytes != null && previousBytes != null && now > previousAt && bytes >= previousBytes) {
+                    ((bytes - previousBytes) * 8L / (now - previousAt)).toInt()
+                } else null
+                val dimensions = if (width > 0 && height > 0) "${width}x${height}" else "unknown size"
+                val frameRate = if (fps > 0) ", $fps fps" else ""
+                val rate = bitrate?.let { ", ${it} kbps" } ?: ""
+                MessageLog.add(ctx, "MEDIA", "outgoing video: $dimensions$frameRate$rate")
+            } catch (_: Exception) {
+                // WebRTC statistics are diagnostic only.
             }
         }
     }
@@ -440,6 +505,7 @@ class RtcEngine(private val ctx: Context, private val events: Events, private va
     fun close() {
         if (closed) return
         closed = true
+        videoStatsHandler.removeCallbacks(videoStatsTask)
         detachRenderers()
         val p = pc
         val a = audioSource
